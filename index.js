@@ -11,15 +11,17 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cors({ origin: "*" }))
 
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
 
-app.get("/", (req,res)=>{
-    res.status(200).json({message: "on vercel"})
+
+app.get("/", (req, res) => {
+    res.status(200).json({ message: "on vercel" })
 })
 
 app.post('/api/chat', async (req, res) => {
+
+    const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+    });
     const { cuoioCapelluto, densita, email, nome, personalitaRicci, porosita, spessoreCapello, sts } = req.body;
     if (!cuoioCapelluto, !densita, !email, !nome, !personalitaRicci, !porosita, !spessoreCapello, !sts) {
         res.status(400).json({ message: 'Mancano dati da inviare' });
@@ -44,7 +46,7 @@ app.post('/api/chat', async (req, res) => {
             model: 'gpt-3.5-turbo',
             messages: [
                 { role: 'system', content: context },
-                { role: 'system', content: "Si prega di rispondere il più rapidamente possibile, ma spiegare alla persona in modo chiaro cosa deve fare, ma in modo breve. utilizzando il minor numero di token"},
+                { role: 'system', content: "Si prega di rispondere il più rapidamente possibile, ma spiegare alla persona in modo chiaro cosa deve fare, ma in modo breve. utilizzando il minor numero di token" },
             ]
         })
 
@@ -57,9 +59,5 @@ app.post('/api/chat', async (req, res) => {
         res.status(500).json({ error: 'Ha ocurrido un error' });
     }
 });
-
-// app.listen(PORT, () => {
-//     console.log('Server is running on port', PORT);
-// });   
-
+   
 export default app 
