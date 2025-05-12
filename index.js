@@ -46,7 +46,7 @@ app.post('/api/chat', async (req, res) => {
             model: 'gpt-3.5-turbo',
             messages: [
                 { role: 'system', content: context },
-                { role: 'system', content: "Si prega di rispondere il più rapidamente possibile, ma spiegare alla persona in modo chiaro cosa deve fare, ma in modo breve. utilizzando il minor numero di token" },
+                { role: 'system', content: "Si prega di rispondere il più rapidamente possibile, ma spiegare alla persona in modo chiaro cosa deve fare, ma in modo breve. sempre iniziare la risposta come La routine WOW per *nome* della Ragazza Riccia è:, ogni racommedazione iniziala con -. utilizzando il minor numero di token" },
             ]
         })
 
