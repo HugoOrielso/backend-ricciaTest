@@ -10,7 +10,20 @@ const app = express();
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: "*" }));
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://frontend-riccia-test.vercel.app",
+];
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+app.options("*", cors());
 
 app.get("/", (req, res) => {
   res.status(200).json({ message: "on vercel" });
