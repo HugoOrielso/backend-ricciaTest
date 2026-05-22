@@ -1,63 +1,116 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import OpenAI from 'openai';
-import cors from 'cors'
-const app = express();
-const PORT = process.env.PORT || 3000;
+import express from "express";
+import dotenv from "dotenv";
+import OpenAI from "openai";
+import cors from "cors";
+import axios from "axios";
+
 dotenv.config();
 
-app.use(express.json())
+const app = express();
+
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors({ origin: "*" }))
-
-
-
+app.use(cors({ origin: "*" }));
 
 app.get("/", (req, res) => {
-    res.status(200).json({ message: "on vercel" })
-})
-
-app.post('/api/chat', async (req, res) => {
-
-    const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-    });
-    const { cuoioCapelluto, densita, email, nome, personalitaRicci, porosita, spessoreCapello, sts } = req.body;
-    if (!cuoioCapelluto, !densita, !email, !nome, !personalitaRicci, !porosita, !spessoreCapello, !sts) {
-        res.status(400).json({ message: 'Mancano dati da inviare' });
-        return;
-    }
-
-    const context = `
-    Ciao, sei un assistente virtuale dell'azienda "La Ragazza Riccia".
-    La riccioluta ${nome} ha capelli ${spessoreCapello}, di quantità ${densita}, un cuoio capelluto che ${cuoioCapelluto}, ha vissuto recentemente ${sts}, ha ricci ${personalitaRicci} e presenta una porosità ${porosita}.
-    Scrivile una routine personalizzata di lavaggio, styling e trattamenti usando solo prodotti del brand La Ragazza Riccia, tra i seguenti:
-    - Shampoo Riccia (Shampoo ideale per capelli ricci, crespi e indisciplinati. Deterge in profondità donando al cuoio capelluto una piacevole sensazione di fresco e pulito.)
-    - Scrub Detossinante (Scrub detossinante e purificante. Le microsfere di silice esfoliano delicatamente il cuoio capelluto facilitando il rinnovamento cellulare.)
-    - Balsamo Riccia (Balsamo ideale per capelli ricci, crespi e indisciplinati. Ricco di burri vegetali dall’azione nutriente e condizionante, particolarmente indicato per capelli secchi e disidratati)
-    - Leave-in Riccia (Lozione spray formulata per proteggere, definire e condizionare il riccio. Un polimero di styling aiuta a modellare il riccio fissandone la tenuta durante l’arco della giornata.)
-    - Crema 3 in 1 250ml (A capelli umidi e in sezioni, applicare la crema styling 3 in 1 e pettinare ripetutamente con la spazzola, definire e fissare con il gel. Se vuoi applicarlo come maschera, applicalo per 30 minuti e rimuovi, quindi continua con la tua routine di styling preferita.)
-    - Gel Modellante 250 ml (Perfetto per lo styling, il Gel modellante a media durata di Rizos Felices sigilla il tuo riccio senza farlo risultare appesantito, secco o maltrattato.)
-    - KIT I MIEI SUPERPOTERI (Il kit definitivo per ricci sani, definiti e senza stress! Con tre impacchi specifici e un calendario guidato, saprai sempre quando e come trattare i tuoi capelli per risultati visibili).
-    È possibile rispondere solo a domande inerenti l'attività "La Ragazza Riccia", tutto il resto è vietato.`
-
-    try {
-        const request = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [
-                { role: 'system', content: context },
-                { role: 'system', content: "Si prega di rispondere il più rapidamente possibile, ma spiegare alla persona in modo chiaro cosa deve fare, ma in modo breve. sempre iniziare la risposta come La routine WOW per *nome* della Ragazza Riccia è:, ogni racommedazione iniziala con -. utilizzando il minor numero di token" },
-            ]
-        })
-
-        const reply = request.choices[0].message.content;
-
-        return res.status(200).json({ reply });
-
-    } catch (error) {
-        console.log(error);
-        res.status(500).json({ error: 'Ha ocurrido un error' });
-    }
+  res.status(200).json({ message: "on vercel" });
 });
-   
-export default app 
+
+app.post("/api/subscribe", async (req, res) => {
+  try {
+    const { email, name, phone } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const headers = {
+      Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
+      accept: "application/vnd.api+json",
+      "content-type": "application/vnd.api+json",
+      revision: "2026-04-15",
+    };
+
+    const searchResponse = await axios.get(
+      `https://a.klaviyo.com/api/profiles/?filter=equals(email,"${email}")`,
+      { headers }
+    );
+
+    const existingProfile = searchResponse.data?.data?.[0];
+
+    if (!existingProfile?.id) {
+      await axios.post(
+        "https://a.klaviyo.com/api/profiles/",
+        {
+          data: {
+            type: "profile",
+            attributes: {
+              email,
+              first_name: name || undefined,
+              phone_number: phone || undefined,
+            },
+          },
+        },
+        { headers }
+      );
+    }
+
+    const subscribeResponse = await axios.post(
+      "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
+      {
+        data: {
+          type: "profile-subscription-bulk-create-job",
+          attributes: {
+            profiles: {
+              data: [
+                {
+                  type: "profile",
+                  attributes: {
+                    email,
+                    subscriptions: {
+                      email: {
+                        marketing: {
+                          consent: "SUBSCRIBED",
+                        },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          relationships: {
+            list: {
+              data: {
+                type: "list",
+                id: process.env.KLAVIYO_LIST_ID,
+              },
+            },
+          },
+        },
+      },
+      { headers }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: existingProfile?.id
+        ? "Existing user subscribed to list successfully"
+        : "New user created and subscribed to list successfully",
+      data: subscribeResponse.data,
+    });
+  } catch (error) {
+    return res.status(error?.response?.status || 500).json({
+      success: false,
+      message:
+        error?.response?.data?.errors?.[0]?.detail ||
+        "Internal server error",
+      error: error?.response?.data || error.message,
+    });
+  }
+});
+
+export default app;
