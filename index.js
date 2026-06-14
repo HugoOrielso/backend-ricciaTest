@@ -303,6 +303,8 @@ app.post("/api/subscribe", async (req, res) => {
         html,
       });
 
+      console.log(resendError, resendData)
+
       if (resendError) {
         console.error("Resend error:", resendError);
         return res.status(200).json({
