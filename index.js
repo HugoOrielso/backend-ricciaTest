@@ -296,16 +296,27 @@ app.post("/api/subscribe", async (req, res) => {
         prodotti,
       });
 
-      await resend.emails.send({
+      const { data: resendData, error: resendError } = await resend.emails.send({
         from: "La Ragazza Riccia <info@hugoorielso.com>",
         to: email,
         subject: `La tua routine personalizzata è pronta, ${name || "amica"}! 🌀`,
         html,
       });
+
+      if (resendError) {
+        console.error("Resend error:", resendError);
+        return res.status(200).json({
+          success: true,
+          emailError: true,
+          message: "Iscrizione completata, ma l'email non è stata consegnata.",
+          resendError: resendError.message,
+        });
+      }
     }
 
     return res.status(200).json({
       success: true,
+      emailError: false,
       message: existingProfile?.id
         ? "Existing user subscribed and email sent"
         : "New user created, subscribed and email sent",
