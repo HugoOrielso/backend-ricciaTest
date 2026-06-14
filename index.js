@@ -3,6 +3,32 @@ import dotenv from "dotenv";
 import cors from "cors";
 import axios from "axios";
 import { Resend } from "resend";
+import MailChecker from "mailchecker";
+import dns from "dns/promises";
+
+async function validaEmail(email) {
+  // 1. Formato básico
+  const formatoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!formatoOk) return { valido: false, motivo: "Formato email non valido." };
+
+  // 2. Dominio temporaneo (mailinator, guerrilla, etc)
+  if (!MailChecker.isValid(email)) {
+    return { valido: false, motivo: "Email temporanea non accettata." };
+  }
+
+  // 3. Verifica que el dominio tenga registros MX (que pueda recibir emails)
+  const dominio = email.split("@")[1];
+  try {
+    const mx = await dns.resolveMx(dominio);
+    if (!mx || mx.length === 0) {
+      return { valido: false, motivo: "Il dominio email non esiste." };
+    }
+  } catch {
+    return { valido: false, motivo: "Il dominio email non esiste." };
+  }
+
+  return { valido: true };
+}
 
 dotenv.config();
 
@@ -222,6 +248,15 @@ app.post("/api/subscribe", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email is required" });
     }
 
+    // ── Validación del email ─────────────────────────────────────────────────
+    const { valido, motivo } = await validaEmail(email);
+    if (!valido) {
+      return res.status(400).json({
+        success: false,
+        emailError: true,
+        message: motivo,
+      });
+    }
     // ── 1. Klaviyo: suscribir ────────────────────────────────────────────────
     const headers = {
       Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
