@@ -314,7 +314,7 @@ app.post("/api/subscribe", async (req, res) => {
       });
 
       const { data: resendData, error: resendError } = await resend.emails.send({
-        from: "La Ragazza Riccia <info@hugoorielso.com>",
+        from: "La Ragazza Riccia <info@laragazzariccia.com>",
         to: email,
         subject: `La tua routine personalizzata è pronta, ${name || "amica"}!`,
         html,
