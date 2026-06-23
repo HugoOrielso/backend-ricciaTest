@@ -45,7 +45,9 @@ app.use(express.urlencoded({ extended: true }));
 
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:3000",
   "https://frontend-riccia-test.vercel.app",
+  "https://laragazzariccia.com",
 ];
 
 app.use((req, res, next) => {
