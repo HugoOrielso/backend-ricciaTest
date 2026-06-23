@@ -359,4 +359,104 @@ app.post("/api/subscribe", async (req, res) => {
   }
 });
 
+app.post("/api/subscribe-salone", async (req, res) => {
+  try {
+    const { email, nome, nomeSalone } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const { valido, motivo } = await validaEmail(email);
+    if (!valido) {
+      return res.status(400).json({
+        success: false,
+        emailError: true,
+        message: motivo,
+      });
+    }
+
+    const headers = {
+      Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
+      accept: "application/vnd.api+json",
+      "content-type": "application/vnd.api+json",
+      revision: "2026-04-15",
+    };
+
+    // Buscar si ya existe el perfil
+    const searchResponse = await axios.get(
+      `https://a.klaviyo.com/api/profiles/?filter=equals(email,"${email}")`,
+      { headers }
+    );
+
+    const existingProfile = searchResponse.data?.data?.[0];
+
+    if (!existingProfile?.id) {
+      await axios.post(
+        "https://a.klaviyo.com/api/profiles/",
+        {
+          data: {
+            type: "profile",
+            attributes: {
+              email,
+              first_name: nome || undefined,
+              properties: {
+                nome_salone: nomeSalone || undefined,
+                privacy_policy_confirmed: true,
+              },
+            },
+          },
+        },
+        { headers }
+      );
+    }
+
+    // Suscribir a la lista UHrAZE
+    await axios.post(
+      "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
+      {
+        data: {
+          type: "profile-subscription-bulk-create-job",
+          attributes: {
+            profiles: {
+              data: [
+                {
+                  type: "profile",
+                  attributes: {
+                    email,
+                    subscriptions: {
+                      email: { marketing: { consent: "SUBSCRIBED" } },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          relationships: {
+            list: {
+              data: { type: "list", id: "UHrAZE" },
+            },
+          },
+        },
+      },
+      { headers }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: existingProfile?.id
+        ? "Profilo esistente aggiornato"
+        : "Nuovo profilo creato e iscritto",
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error?.response?.status || 500).json({
+      success: false,
+      message:
+        error?.response?.data?.errors?.[0]?.detail || "Internal server error",
+      error: error?.response?.data || error.message,
+    });
+  }
+});
+
 export default app;
