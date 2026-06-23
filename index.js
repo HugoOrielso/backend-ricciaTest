@@ -64,6 +64,8 @@ app.get("/", (req, res) => {
 });
 
 function generaEmailHTML({ nome, passi, prodotti }) {
+  const LOGO_URL =
+    "https://laragazzariccia.com/cdn/shop/files/logo_riccia_2026_2x_08368373-224e-4a3c-9095-ee095c1f98a8.png";
   const PINK = "#E92176";
   const PINK_LIGHT = "#fbeaf0";
   const PINK_MID = "#f4c0d1";
@@ -144,7 +146,13 @@ function generaEmailHTML({ nome, passi, prodotti }) {
       <td align="center">
         <table cellpadding="0" cellspacing="0" border="0" width="640" class="email-container" style="max-width: 640px; width: 640px;">
           <tr>
-            <td style="height: 10px; background: ${PINK}; border-radius: 18px 18px 0 0;"></td>
+            <td style="background: white; padding: 28px 24px 22px 24px; text-align: center; border-radius: 18px 18px 0 0;">
+              <img src="${LOGO_URL}" alt="La Ragazza Riccia" width="220" style="display: block; width: 220px; max-width: 80%; height: auto; margin: 0 auto; border: 0;" />
+            </td>
+          </tr>
+
+          <tr>
+            <td style="height: 10px; background: ${PINK};"></td>
           </tr>
 
           <tr>
