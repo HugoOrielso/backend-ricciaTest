@@ -35,6 +35,36 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
+function buildQuizProperties(quizAnswers = []) {
+  if (!Array.isArray(quizAnswers)) return {};
+
+  const propertyNames = {
+    guidaLavaggio: "cmr_guida_lavaggio",
+    porosita: "cmr_porosita",
+    sts: "cmr_sts",
+    spessoreDensita: "cmr_spessore_densita",
+    personalitaRicci: "cmr_personalita_ricci",
+    problemaPrincipale: "cmr_problema_principale",
+    obiettivoDesiderato: "cmr_obiettivo_desiderato",
+  };
+
+  return quizAnswers.reduce(
+    (properties, answer) => {
+      if (!answer?.id) return properties;
+
+      const propertyName = propertyNames[answer.id] || `cmr_${answer.id}`;
+      properties[propertyName] = answer.label || answer.value || "";
+      properties[`${propertyName}_value`] = answer.value || "";
+
+      return properties;
+    },
+    {
+      cmr_risposte_test: quizAnswers,
+      cmr_test_completed_at: new Date().toISOString(),
+    }
+  );
+}
+
 dotenv.config();
 
 const app = express();
@@ -234,7 +264,7 @@ function generaEmailHTML({ nome, passi, prodotti }) {
 
 app.post("/api/subscribe", async (req, res) => {
   try {
-    const { email, name, phone, rutina, prodotti, newsletterConsent } = req.body;
+    const { email, name, phone, rutina, prodotti, newsletterConsent, quizAnswers } = req.body;
 
     if (!email) {
       return res.status(400).json({ success: false, message: "Email is required" });
@@ -262,6 +292,11 @@ app.post("/api/subscribe", async (req, res) => {
     );
 
     const existingProfile = searchResponse.data?.data?.[0];
+    const profileProperties = {
+      privacy_policy_confirmed: true,
+      newsletter_opt_in: Boolean(newsletterConsent),
+      ...buildQuizProperties(quizAnswers),
+    };
 
     if (!existingProfile?.id) {
       await axios.post(
@@ -273,10 +308,23 @@ app.post("/api/subscribe", async (req, res) => {
               email,
               first_name: name || undefined,
               phone_number: phone || undefined,
-              properties: {
-                privacy_policy_confirmed: true,
-                newsletter_opt_in: Boolean(newsletterConsent),
-              },
+              properties: profileProperties,
+            },
+          },
+        },
+        { headers }
+      );
+    } else {
+      await axios.patch(
+        `https://a.klaviyo.com/api/profiles/${existingProfile.id}/`,
+        {
+          data: {
+            type: "profile",
+            id: existingProfile.id,
+            attributes: {
+              first_name: name || undefined,
+              phone_number: phone || undefined,
+              properties: profileProperties,
             },
           },
         },
