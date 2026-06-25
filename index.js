@@ -201,6 +201,9 @@ function generaEmailHTML({ nome, passi, prodotti }) {
               <p style="margin: 0 0 20px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
                 Ti consigliamo di seguire la routine per almeno 4-6 settimane prima di valutarne i risultati, mi raccomando facci sapere se hai dubbi o bisogno di supporto.
               </p>
+              <p style="margin: 0 0 20px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
+                Per qualsiasi dubbio puoi contattarci anche su WhatsApp al <strong style="color: ${TEXT_DARK};">+39 351 610 1655</strong>.
+              </p>
               <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 16px; font-weight: 800; color: ${TEXT_DARK};">
                 Un ultimo consiglio da Audrey 🩷
               </p>
