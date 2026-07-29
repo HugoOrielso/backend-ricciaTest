@@ -35,6 +35,13 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
+function normalizeOptionalText(value) {
+  if (typeof value !== "string") return undefined;
+
+  const normalized = value.trim();
+  return normalized || undefined;
+}
+
 function buildQuizProperties(quizAnswers = []) {
   if (!Array.isArray(quizAnswers)) return {};
 
@@ -95,7 +102,14 @@ app.get("/", (req, res) => {
   res.status(200).json({ message: "on vercel" });
 });
 
-function generaEmailHTML({ nome, passi, prodotti }) {
+function generaEmailHTML({
+  nome,
+  passi,
+  prodotti,
+  consiglio,
+  consiglioStyling,
+  consiglioLavaggio,
+}) {
   const LOGO_URL =
     "https://laragazzariccia.com/cdn/shop/files/logo_riccia_2026_2x_08368373-224e-4a3c-9095-ee095c1f98a8.png";
   const PINK = "#E92176";
@@ -157,6 +171,62 @@ function generaEmailHTML({ nome, passi, prodotti }) {
     )
     .join("");
 
+  const consiglioHTML = consiglio
+    ? `
+          <tr>
+            <td class="content-cell" style="background: white; padding: 4px 34px 24px 34px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: ${PINK_LIGHT}; border: 1.5px solid ${PINK_MID}; border-radius: 14px;">
+                <tr>
+                  <td style="padding: 18px;">
+                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
+                      Il consiglio per i tuoi ricci
+                    </p>
+                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
+                      ${escapeHtml(consiglio)}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+    : "";
+
+  const consiglioStylingHTML = consiglioStyling
+    ? `
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top: 10px; background: ${PINK_LIGHT}; border: 1.5px solid ${PINK_MID}; border-radius: 14px;">
+                <tr>
+                  <td style="padding: 18px;">
+                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
+                      Nota di styling
+                    </p>
+                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
+                      ${escapeHtml(consiglioStyling)}
+                    </p>
+                  </td>
+                </tr>
+              </table>`
+    : "";
+
+  const consiglioLavaggioHTML = consiglioLavaggio
+    ? `
+          <tr>
+            <td class="content-cell" style="background: white; padding: 4px 34px 18px 34px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #f0f9ff; border: 1.5px solid #bae6fd; border-radius: 14px;">
+                <tr>
+                  <td style="padding: 18px;">
+                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: #0369a1; text-transform: uppercase; letter-spacing: 0.08em;">
+                      Consiglio di lavaggio
+                    </p>
+                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
+                      ${escapeHtml(consiglioLavaggio)}
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="it">
 <head>
@@ -212,11 +282,16 @@ function generaEmailHTML({ nome, passi, prodotti }) {
             </td>
           </tr>
 
+          ${consiglioLavaggioHTML}
+
+          ${consiglioHTML}
+
           <tr>
             <td class="content-cell" style="background: white; padding: 6px 26px 12px 26px;">
               <table cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>${prodottiHTML}</tr>
               </table>
+              ${consiglioStylingHTML}
             </td>
           </tr>
 
@@ -264,7 +339,18 @@ function generaEmailHTML({ nome, passi, prodotti }) {
 
 app.post("/api/subscribe", async (req, res) => {
   try {
-    const { email, name, phone, rutina, prodotti, newsletterConsent, quizAnswers } = req.body;
+    const {
+      email,
+      name,
+      phone,
+      rutina,
+      prodotti,
+      consiglio,
+      consiglioStyling,
+      consiglioLavaggio,
+      newsletterConsent,
+      quizAnswers,
+    } = req.body;
 
     if (!email) {
       return res.status(400).json({ success: false, message: "Email is required" });
@@ -372,6 +458,9 @@ app.post("/api/subscribe", async (req, res) => {
         nome: name || "amica",
         passi,
         prodotti,
+        consiglio: normalizeOptionalText(consiglio),
+        consiglioStyling: normalizeOptionalText(consiglioStyling),
+        consiglioLavaggio: normalizeOptionalText(consiglioLavaggio),
       });
 
       const { data: resendData, error: resendError } = await resend.emails.send({
