@@ -212,10 +212,10 @@ function generaEmailHTML({
     ? `
           <tr>
             <td class="content-cell" style="background: white; padding: 4px 34px 18px 34px;">
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #f0f9ff; border: 1.5px solid #bae6fd; border-radius: 14px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #B269A1; border: 1.5px solid #BB75AA; border-radius: 14px;">
                 <tr>
                   <td style="padding: 18px;">
-                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: #0369a1; text-transform: uppercase; letter-spacing: 0.08em;">
+                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: #E82176; text-transform: uppercase; letter-spacing: 0.08em;">
                       Consiglio di lavaggio
                     </p>
                     <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
@@ -308,7 +308,8 @@ function generaEmailHTML({
                 Ti consigliamo di seguire la routine per almeno 4-6 settimane prima di valutarne i risultati, mi raccomando facci sapere se hai dubbi o bisogno di supporto.
               </p>
               <p style="margin: 0 0 20px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
-                Per qualsiasi dubbio puoi contattarci anche su WhatsApp al <strong style="color: ${TEXT_DARK};">+39 351 610 1655</strong>.
+                Per qualsiasi dubbio puoi contattarci anche su WhatsApp al
+                <a href="https://wa.me/393516101655" target="_blank" style="color: ${PINK}; font-weight: 800; text-decoration: underline;">+39 351 610 1655</a>.
               </p>
               <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 16px; font-weight: 800; color: ${TEXT_DARK};">
                 Un ultimo consiglio da Audrey 🩷
@@ -318,6 +319,9 @@ function generaEmailHTML({
               </p>
               <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
                 Per questo motivo ho creato il metodo Conosco i Miei Ricci®: perché non esiste una routine perfetta per tutte, ma esiste quella giusta per te.
+              </p>
+              <p style="margin: 18px 0 0 0; font-family: Arial, sans-serif; font-size: 16px; font-weight: 800; color: ${TEXT_DARK}; line-height: 1.5;">
+                Team La Ragazza Riccia
               </p>
             </td>
           </tr>
