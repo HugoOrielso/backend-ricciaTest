@@ -212,7 +212,7 @@ function generaEmailHTML({
     ? `
           <tr>
             <td class="content-cell" style="background: white; padding: 4px 34px 18px 34px;">
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #B269A1; border: 1.5px solid #BB75AA; border-radius: 14px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: #b269a178; border: 1.5px solid #BB75AA; border-radius: 14px;">
                 <tr>
                   <td style="padding: 18px;">
                     <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: #E82176; text-transform: uppercase; letter-spacing: 0.08em;">
