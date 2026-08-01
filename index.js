@@ -333,8 +333,8 @@ function generaEmailHTML({
                 Ti consigliamo di seguire la routine per almeno 4-6 settimane prima di valutarne i risultati, mi raccomando facci sapere se hai dubbi o bisogno di supporto.
               </p>
               <p style="margin: 0 0 20px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
-                Per qualsiasi dubbio puoi contattarci anche su WhatsApp al
-                <a href="https://wa.me/393516101655" target="_blank" style="color: ${PINK}; font-weight: 800; text-decoration: underline;">+39 351 610 1655</a>.
+                Per qualsiasi dubbio puoi contattarci anche su WhatsApp:
+                <a href="https://wa.me/393516101655" target="_blank" style="color: ${PINK}; font-weight: 800; text-decoration: underline;">scrivici qui</a>.
               </p>
               <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 16px; font-weight: 800; color: ${TEXT_DARK};">
                 Un ultimo consiglio da Audrey 🩷
