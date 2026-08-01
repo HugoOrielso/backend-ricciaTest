@@ -110,6 +110,7 @@ function generaEmailHTML({
   consiglio,
   consiglioStyling,
   consiglioLavaggio,
+  consiglioSTS,
 }) {
   const LOGO_URL =
     "https://laragazzariccia.com/cdn/shop/files/logo_riccia_2026_2x_08368373-224e-4a3c-9095-ee095c1f98a8.png";
@@ -228,6 +229,28 @@ function generaEmailHTML({
           </tr>`
     : "";
 
+  const consiglioSTSHTML = consiglioSTS
+    ? `
+          <tr>
+            <td class="content-cell" style="background: white; padding: 4px 34px 24px 34px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: ${PINK_LIGHT}; border: 1.5px solid ${PINK_MID}; border-radius: 14px;">
+                <tr>
+                  <td style="padding: 18px;">
+                    <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
+                      Un consiglio per questo momento
+                    </p>
+                    ${consiglioSTS.split(/\n\s*\n/).map((testo) => {
+                      const match = testo.match(/^(\d+\.\s*)([^.]+\.)(.*)$/s);
+                      if (!match) return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</p>`;
+                      return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;"><strong>${escapeHtml(match[1] + match[2])}</strong>${escapeHtml(match[3])}</p>`;
+                    }).join("")}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="it">
 <head>
@@ -286,6 +309,8 @@ function generaEmailHTML({
           ${consiglioLavaggioHTML}
 
           ${consiglioHTML}
+
+          ${consiglioSTSHTML}
 
           <tr>
             <td class="content-cell" style="background: white; padding: 6px 26px 12px 26px;">
@@ -353,6 +378,9 @@ app.post("/api/subscribe", async (req, res) => {
       consiglio,
       consiglioStyling,
       consiglioLavaggio,
+      consiglioSTS,
+      // Compatibilità con le richieste generate prima del nuovo campo dedicato.
+      consiglioSituazioni,
       newsletterConsent,
       quizAnswers,
     } = req.body;
@@ -466,6 +494,9 @@ app.post("/api/subscribe", async (req, res) => {
         consiglio: normalizeOptionalText(consiglio),
         consiglioStyling: normalizeOptionalText(consiglioStyling),
         consiglioLavaggio: normalizeOptionalText(consiglioLavaggio),
+        consiglioSTS:
+          normalizeOptionalText(consiglioSTS) ||
+          normalizeOptionalText(consiglioSituazioni),
       });
 
       const { data: resendData, error: resendError } = await resend.emails.send({
