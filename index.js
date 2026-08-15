@@ -4,6 +4,7 @@ import axios from "axios";
 import { Resend } from "resend";
 import MailChecker from "mailchecker";
 import dns from "dns/promises";
+import crypto from "crypto";
 
 async function validaEmail(email) {
   const formatoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -240,10 +241,10 @@ function generaEmailHTML({
                       Un consiglio per questo momento
                     </p>
                     ${consiglioSTS.split(/\n\s*\n/).map((testo) => {
-                      const match = testo.match(/^(\d+\.\s*)([^.]+\.)(.*)$/s);
-                      if (!match) return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</p>`;
-                      return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;"><strong>${escapeHtml(match[1] + match[2])}</strong>${escapeHtml(match[3])}</p>`;
-                    }).join("")}
+      const match = testo.match(/^(\d+\.\s*)([^.]+\.)(.*)$/s);
+      if (!match) return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</p>`;
+      return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;"><strong>${escapeHtml(match[1] + match[2])}</strong>${escapeHtml(match[3])}</p>`;
+    }).join("")}
                   </td>
                 </tr>
               </table>
@@ -367,6 +368,174 @@ function generaEmailHTML({
 </html>`;
 }
 
+
+async function getShopifyAccessToken() {
+  if (!process.env.SHOPIFY_CLIENT_ID || !process.env.SHOPIFY_CLIENT_SECRET) {
+    throw new Error("Credenziali Shopify non configurate");
+  }
+
+  const params = new URLSearchParams();
+
+  params.append("grant_type", "client_credentials");
+  params.append("client_id", process.env.SHOPIFY_CLIENT_ID);
+  params.append("client_secret", process.env.SHOPIFY_CLIENT_SECRET);
+
+  const response = await axios.post(
+    `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`,
+    params,
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+    }
+  );
+
+  return response.data.access_token;
+}
+
+function generaCodigoCoupon() {
+  const random = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+
+  return `RICCI-${random}`;
+}
+
+async function creaShopifyCoupon() {
+  if (!process.env.SHOPIFY_STORE_DOMAIN) {
+    throw new Error("SHOPIFY_STORE_DOMAIN non configurato");
+  }
+
+  const accessToken = await getShopifyAccessToken();
+
+  const code = generaCodigoCoupon();
+
+  const startsAt = new Date();
+  const endsAt = new Date(
+    startsAt.getTime() + 48 * 60 * 60 * 1000
+  );
+
+  const percentuale = Number(process.env.SHOPIFY_TEST_COUPON_PERCENT);
+
+  if (!Number.isFinite(percentuale) || percentuale <= 0 || percentuale > 100) {
+    throw new Error("SHOPIFY_TEST_COUPON_PERCENT deve essere compreso tra 1 e 100");
+  }
+
+  const mutation = `
+    mutation CreateDiscountCode($basicCodeDiscount: DiscountCodeBasicInput!) {
+      discountCodeBasicCreate(
+        basicCodeDiscount: $basicCodeDiscount
+      ) {
+        codeDiscountNode {
+          id
+          codeDiscount {
+            ... on DiscountCodeBasic {
+              title
+              startsAt
+              endsAt
+              codes(first: 1) {
+                nodes {
+                  code
+                }
+              }
+            }
+          }
+        }
+
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    basicCodeDiscount: {
+      title: `Test Conosco i Miei Ricci - ${code}`,
+
+      code,
+
+      startsAt: startsAt.toISOString(),
+
+      endsAt: endsAt.toISOString(),
+
+      context: {
+        all: true,
+      },
+
+      customerGets: {
+        value: {
+          percentage: percentuale / 100,
+        },
+
+        items: {
+          all: true,
+        },
+      },
+
+      appliesOncePerCustomer: true,
+
+      usageLimit: 1,
+    },
+  };
+
+  const response = await axios.post(
+    `https://${process.env.SHOPIFY_STORE_DOMAIN}/admin/api/2026-07/graphql.json`,
+    {
+      query: mutation,
+      variables,
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken,
+      },
+    }
+  );
+
+  if (response.data?.errors?.length) {
+    console.error(
+      "Shopify GraphQL errors:",
+      response.data.errors
+    );
+
+    throw new Error(
+      response.data.errors
+        .map((error) => error.message)
+        .join(", ")
+    );
+  }
+
+  const result =
+    response.data?.data?.discountCodeBasicCreate;
+
+  if (result?.userErrors?.length) {
+    console.error(
+      "Shopify discount errors:",
+      result.userErrors
+    );
+
+    throw new Error(
+      result.userErrors
+        .map((error) => error.message)
+        .join(", ")
+    );
+  }
+
+  if (!result?.codeDiscountNode?.id) {
+    throw new Error(
+      "Shopify non ha restituito il coupon creato"
+    );
+  }
+
+  return {
+    id: result.codeDiscountNode.id,
+    code,
+    percent: percentuale,
+    startsAt: startsAt.toISOString(),
+    expiresAt: endsAt.toISOString(),
+  };
+}
+
 app.post("/api/subscribe", async (req, res) => {
   try {
     const {
@@ -397,6 +566,9 @@ app.post("/api/subscribe", async (req, res) => {
         message: motivo,
       });
     }
+
+    const coupon = await creaShopifyCoupon();
+    console.log("Coupon Shopify creato:", coupon.code);
 
     const headers = {
       Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
@@ -513,6 +685,7 @@ app.post("/api/subscribe", async (req, res) => {
         return res.status(200).json({
           success: true,
           emailError: true,
+          coupon,
           message: "Iscrizione completata, ma l'email non è stata consegnata.",
           resendError: resendError.message,
         });
@@ -522,6 +695,7 @@ app.post("/api/subscribe", async (req, res) => {
     return res.status(200).json({
       success: true,
       emailError: false,
+      coupon,
       message: existingProfile?.id
         ? "Existing user updated and email sent"
         : "New user created and email sent",
