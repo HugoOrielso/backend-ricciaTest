@@ -75,6 +75,67 @@ function buildQuizProperties(quizAnswers = []) {
 
 dotenv.config();
 
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) throw new Error("Supabase non è configurato nel backend");
+  return {
+    url,
+    headers: {
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      "Content-Type": "application/json",
+    },
+  };
+}
+
+function normalizeEmail(email) {
+  return String(email).trim().toLowerCase();
+}
+
+async function findQuizSession(emailNormalized, sessionId) {
+  const { url, headers } = getSupabaseConfig();
+  const { data: byEmail } = await axios.get(`${url}/rest/v1/quiz_sessions`, {
+    headers,
+    params: { select: "*", email_normalized: `eq.${emailNormalized}`, limit: 1 },
+  });
+  if (byEmail?.[0] || !sessionId) return byEmail?.[0] || null;
+
+  const { data: bySession } = await axios.get(`${url}/rest/v1/quiz_sessions`, {
+    headers,
+    params: { select: "*", session_id: `eq.${sessionId}`, limit: 1 },
+  });
+  return bySession?.[0] || null;
+}
+
+async function saveQuizSession(existingSession, payload) {
+  const { url, headers } = getSupabaseConfig();
+  if (existingSession?.id) {
+    const { data } = await axios.patch(
+      `${url}/rest/v1/quiz_sessions`,
+      { ...payload, updated_at: new Date().toISOString() },
+      { headers: { ...headers, Prefer: "return=representation" }, params: { id: `eq.${existingSession.id}` } }
+    );
+    return data?.[0];
+  }
+  const { data } = await axios.post(
+    `${url}/rest/v1/quiz_sessions`,
+    payload,
+    { headers: { ...headers, Prefer: "return=representation" } }
+  );
+  return data?.[0];
+}
+
+async function updateQuizSession(id, values) {
+  if (!id) return;
+  const { url, headers } = getSupabaseConfig();
+  await axios.patch(
+    `${url}/rest/v1/quiz_sessions`,
+    { ...values, updated_at: new Date().toISOString() },
+    { headers, params: { id: `eq.${id}` } }
+  );
+}
+
 const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -552,6 +613,7 @@ app.post("/api/subscribe", async (req, res) => {
       consiglioSituazioni,
       newsletterConsent,
       quizAnswers,
+      sessionId,
     } = req.body;
 
     if (!email) {
@@ -567,8 +629,53 @@ app.post("/api/subscribe", async (req, res) => {
       });
     }
 
+    const emailNormalized = normalizeEmail(email);
+    const normalizedSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)
+      ? sessionId
+      : crypto.randomUUID();
+    const kitConsigliato = Array.isArray(prodotti)
+      ? prodotti.map((prodotto) => prodotto?.nome).filter(Boolean).join(" | ")
+      : "";
+    const sessionData = {
+      name: name || null,
+      answers: Array.isArray(quizAnswers) ? quizAnswers : [],
+      recommended_kits: Array.isArray(prodotti) ? prodotti : [],
+      kit_consigliato: kitConsigliato || null,
+    };
+    const existingQuizSession = await findQuizSession(emailNormalized, normalizedSessionId);
+    const existingCouponIsActive =
+      existingQuizSession?.coupon_code &&
+      existingQuizSession?.coupon_expires_at &&
+      new Date(existingQuizSession.coupon_expires_at).getTime() > Date.now();
+
+    if (existingCouponIsActive) {
+      await saveQuizSession(existingQuizSession, sessionData);
+      return res.status(200).json({
+        success: true,
+        emailError: false,
+        reusedCoupon: true,
+        coupon: {
+          code: existingQuizSession.coupon_code,
+          percent: existingQuizSession.coupon_percent,
+          expiresAt: existingQuizSession.coupon_expires_at,
+        },
+        message: "Coupon esistente recuperato",
+      });
+    }
+
     const coupon = await creaShopifyCoupon();
     console.log("Coupon Shopify creato:", coupon.code);
+    const savedQuizSession = await saveQuizSession(existingQuizSession, {
+      ...sessionData,
+      ...(!existingQuizSession && { session_id: normalizedSessionId, email_normalized: emailNormalized }),
+      coupon_code: coupon.code,
+      coupon_percent: coupon.percent,
+      coupon_created_at: coupon.startsAt,
+      coupon_expires_at: coupon.expiresAt,
+      coupon_status: "active",
+      klaviyo_synced: false,
+      email_sent: false,
+    });
 
     const headers = {
       Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
@@ -586,6 +693,7 @@ app.post("/api/subscribe", async (req, res) => {
     const profileProperties = {
       privacy_policy_confirmed: true,
       newsletter_opt_in: Boolean(newsletterConsent),
+      kit_consigliato: kitConsigliato,
       ...buildQuizProperties(quizAnswers),
     };
 
@@ -655,6 +763,8 @@ app.post("/api/subscribe", async (req, res) => {
       );
     }
 
+    await updateQuizSession(savedQuizSession?.id, { klaviyo_synced: true });
+
     if (rutina && prodotti) {
       const lineas = rutina.split("\n- ").filter((r) => r.trim() !== "");
       const passi = lineas.slice(1);
@@ -690,6 +800,8 @@ app.post("/api/subscribe", async (req, res) => {
           resendError: resendError.message,
         });
       }
+
+      await updateQuizSession(savedQuizSession?.id, { email_sent: true });
     }
 
     return res.status(200).json({
