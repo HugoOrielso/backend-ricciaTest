@@ -459,7 +459,7 @@ async function creaShopifyCoupon() {
       endsAt: endsAt.toISOString(),
 
       context: {
-        all: true,
+        all: "ALL",
       },
 
       customerGets: {
