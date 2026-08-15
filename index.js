@@ -158,11 +158,36 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
   const accessToken = process.env.META_CONVERSIONS_API_TOKEN;
   const apiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
   const eventId = session.meta_lead_event_id || `quiz_lead_${session.id}`;
+  const attemptNumber = Number(session.meta_lead_attempts || 0) + 1;
+
+  console.info("[Meta CAPI] Lead attempt", {
+    sessionId: session.id,
+    eventId,
+    attemptNumber,
+    pixelConfigured: Boolean(pixelId),
+    tokenConfigured: Boolean(accessToken),
+    testMode: Boolean(process.env.META_TEST_EVENT_CODE),
+  });
+  await updateQuizSession(session.id, {
+    meta_lead_event_id: eventId,
+    meta_lead_attempts: attemptNumber,
+    meta_lead_last_attempt_at: new Date().toISOString(),
+    meta_lead_http_status: null,
+    meta_lead_response: null,
+  });
 
   if (!pixelId || !accessToken) {
+    console.warn("[Meta CAPI] Skipped: missing environment variables", {
+      pixelConfigured: Boolean(pixelId),
+      tokenConfigured: Boolean(accessToken),
+    });
     await updateQuizSession(session.id, {
-      meta_lead_event_id: eventId,
       meta_lead_error: "Meta Conversions API non configurata",
+      meta_lead_response: {
+        stage: "configuration",
+        pixelConfigured: Boolean(pixelId),
+        tokenConfigured: Boolean(accessToken),
+      },
     });
     return;
   }
@@ -189,22 +214,50 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
   try {
     const body = { data: [event] };
     if (process.env.META_TEST_EVENT_CODE) body.test_event_code = process.env.META_TEST_EVENT_CODE;
-    await axios.post(
+    const metaResponse = await axios.post(
       `https://graph.facebook.com/${apiVersion}/${pixelId}/events`,
       body,
       { params: { access_token: accessToken } }
     );
+    console.info("[Meta CAPI] Lead accepted", {
+      sessionId: session.id,
+      eventId,
+      status: metaResponse.status,
+      eventsReceived: metaResponse.data?.events_received,
+    });
     await updateQuizSession(session.id, {
       meta_lead_event_id: eventId,
       meta_lead_sent_at: new Date().toISOString(),
       meta_lead_error: null,
+      meta_lead_http_status: metaResponse.status,
+      meta_lead_response: {
+        events_received: metaResponse.data?.events_received ?? null,
+        messages: metaResponse.data?.messages ?? [],
+        fbtrace_id: metaResponse.data?.fbtrace_id ?? null,
+      },
     });
   } catch (error) {
     const message = error?.response?.data?.error?.message || error.message || "Errore Meta sconosciuto";
-    console.error("Meta Lead error:", message);
+    const status = error?.response?.status || null;
+    const metaError = error?.response?.data?.error;
+    console.error("[Meta CAPI] Lead rejected", {
+      sessionId: session.id,
+      eventId,
+      status,
+      code: metaError?.code,
+      type: metaError?.type,
+      message,
+    });
     await updateQuizSession(session.id, {
       meta_lead_event_id: eventId,
       meta_lead_error: String(message).slice(0, 1000),
+      meta_lead_http_status: status,
+      meta_lead_response: {
+        code: metaError?.code ?? null,
+        type: metaError?.type ?? null,
+        error_subcode: metaError?.error_subcode ?? null,
+        fbtrace_id: metaError?.fbtrace_id ?? null,
+      },
     });
   }
 }
@@ -235,7 +288,13 @@ app.use((req, res, next) => {
 });
 
 app.get("/", (req, res) => {
-  res.status(200).json({ message: "on vercel" });
+  res.status(200).json({
+    message: "on vercel",
+    version: "meta-capi-diagnostics-v1",
+    metaConfigured: Boolean(
+      process.env.META_PIXEL_ID && process.env.META_CONVERSIONS_API_TOKEN
+    ),
+  });
 });
 
 function generaEmailHTML({
