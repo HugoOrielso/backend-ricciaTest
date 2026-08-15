@@ -136,6 +136,79 @@ async function updateQuizSession(id, values) {
   );
 }
 
+function getRequestIp(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
+  return req.socket?.remoteAddress || undefined;
+}
+
+function normalizeSourceUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function trackMetaLead({ req, session, email, sourceUrl }) {
+  if (!session?.id || session.meta_lead_sent_at) return;
+
+  const pixelId = process.env.META_PIXEL_ID;
+  const accessToken = process.env.META_CONVERSIONS_API_TOKEN;
+  const apiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
+  const eventId = session.meta_lead_event_id || `quiz_lead_${session.id}`;
+
+  if (!pixelId || !accessToken) {
+    await updateQuizSession(session.id, {
+      meta_lead_event_id: eventId,
+      meta_lead_error: "Meta Conversions API non configurata",
+    });
+    return;
+  }
+
+  const emailHash = crypto.createHash("sha256").update(normalizeEmail(email)).digest("hex");
+  const event = {
+    event_name: "Lead",
+    event_time: Math.floor(Date.now() / 1000),
+    event_id: eventId,
+    action_source: "website",
+    event_source_url: normalizeSourceUrl(sourceUrl),
+    user_data: {
+      em: [emailHash],
+      external_id: [emailHash],
+      client_ip_address: getRequestIp(req),
+      client_user_agent: req.headers["user-agent"],
+    },
+    custom_data: {
+      content_name: "Quiz Conosco i Miei Ricci",
+      content_category: "Quiz Funnel",
+    },
+  };
+
+  try {
+    const body = { data: [event] };
+    if (process.env.META_TEST_EVENT_CODE) body.test_event_code = process.env.META_TEST_EVENT_CODE;
+    await axios.post(
+      `https://graph.facebook.com/${apiVersion}/${pixelId}/events`,
+      body,
+      { params: { access_token: accessToken } }
+    );
+    await updateQuizSession(session.id, {
+      meta_lead_event_id: eventId,
+      meta_lead_sent_at: new Date().toISOString(),
+      meta_lead_error: null,
+    });
+  } catch (error) {
+    const message = error?.response?.data?.error?.message || error.message || "Errore Meta sconosciuto";
+    console.error("Meta Lead error:", message);
+    await updateQuizSession(session.id, {
+      meta_lead_event_id: eventId,
+      meta_lead_error: String(message).slice(0, 1000),
+    });
+  }
+}
+
 const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -614,6 +687,7 @@ app.post("/api/subscribe", async (req, res) => {
       newsletterConsent,
       quizAnswers,
       sessionId,
+      sourceUrl,
     } = req.body;
 
     if (!email) {
@@ -649,7 +723,8 @@ app.post("/api/subscribe", async (req, res) => {
       new Date(existingQuizSession.coupon_expires_at).getTime() > Date.now();
 
     if (existingCouponIsActive) {
-      await saveQuizSession(existingQuizSession, sessionData);
+      const refreshedQuizSession = await saveQuizSession(existingQuizSession, sessionData);
+      await trackMetaLead({ req, session: refreshedQuizSession, email, sourceUrl });
       return res.status(200).json({
         success: true,
         emailError: false,
@@ -676,6 +751,7 @@ app.post("/api/subscribe", async (req, res) => {
       klaviyo_synced: false,
       email_sent: false,
     });
+    await trackMetaLead({ req, session: savedQuizSession, email, sourceUrl });
 
     const headers = {
       Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
