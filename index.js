@@ -73,6 +73,80 @@ function buildQuizProperties(quizAnswers = []) {
   );
 }
 
+function getKlaviyoHeaders() {
+  return {
+    Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
+    accept: "application/vnd.api+json",
+    "content-type": "application/vnd.api+json",
+    revision: "2026-04-15",
+  };
+}
+
+async function syncQuizProfileToKlaviyo({
+  email,
+  name,
+  phone,
+  newsletterConsent,
+  kitConsigliato,
+  quizAnswers,
+}) {
+  const headers = getKlaviyoHeaders();
+  const searchResponse = await axios.get(
+    "https://a.klaviyo.com/api/profiles/",
+    {
+      headers,
+      params: { filter: `equals(email,"${email}")` },
+    }
+  );
+
+  const existingProfile = searchResponse.data?.data?.[0];
+  const profileProperties = {
+    privacy_policy_confirmed: true,
+    newsletter_opt_in: Boolean(newsletterConsent),
+    kit_consigliato: kitConsigliato,
+    ...buildQuizProperties(quizAnswers),
+  };
+
+  if (!existingProfile?.id) {
+    await axios.post(
+      "https://a.klaviyo.com/api/profiles/",
+      {
+        data: {
+          type: "profile",
+          attributes: {
+            email,
+            first_name: name || undefined,
+            phone_number: phone || undefined,
+            properties: profileProperties,
+          },
+        },
+      },
+      { headers }
+    );
+  } else {
+    await axios.patch(
+      `https://a.klaviyo.com/api/profiles/${existingProfile.id}/`,
+      {
+        data: {
+          type: "profile",
+          id: existingProfile.id,
+          attributes: {
+            first_name: name || undefined,
+            phone_number: phone || undefined,
+            properties: profileProperties,
+          },
+        },
+      },
+      { headers }
+    );
+  }
+
+  console.log("[Klaviyo] Quiz profile synced", {
+    profileId: existingProfile?.id || "created",
+    answerCount: Array.isArray(quizAnswers) ? quizAnswers.length : 0,
+  });
+}
+
 dotenv.config();
 
 function getSupabaseConfig() {
@@ -784,6 +858,15 @@ app.post("/api/subscribe", async (req, res) => {
     if (existingCouponIsActive) {
       const refreshedQuizSession = await saveQuizSession(existingQuizSession, sessionData);
       await trackMetaLead({ req, session: refreshedQuizSession, email, sourceUrl });
+      await syncQuizProfileToKlaviyo({
+        email,
+        name,
+        phone,
+        newsletterConsent,
+        kitConsigliato,
+        quizAnswers,
+      });
+      await updateQuizSession(refreshedQuizSession?.id, { klaviyo_synced: true });
       return res.status(200).json({
         success: true,
         emailError: false,
@@ -812,59 +895,15 @@ app.post("/api/subscribe", async (req, res) => {
     });
     await trackMetaLead({ req, session: savedQuizSession, email, sourceUrl });
 
-    const headers = {
-      Authorization: `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
-      accept: "application/vnd.api+json",
-      "content-type": "application/vnd.api+json",
-      revision: "2026-04-15",
-    };
-
-    const searchResponse = await axios.get(
-      `https://a.klaviyo.com/api/profiles/?filter=equals(email,"${email}")`,
-      { headers }
-    );
-
-    const existingProfile = searchResponse.data?.data?.[0];
-    const profileProperties = {
-      privacy_policy_confirmed: true,
-      newsletter_opt_in: Boolean(newsletterConsent),
-      kit_consigliato: kitConsigliato,
-      ...buildQuizProperties(quizAnswers),
-    };
-
-    if (!existingProfile?.id) {
-      await axios.post(
-        "https://a.klaviyo.com/api/profiles/",
-        {
-          data: {
-            type: "profile",
-            attributes: {
-              email,
-              first_name: name || undefined,
-              phone_number: phone || undefined,
-              properties: profileProperties,
-            },
-          },
-        },
-        { headers }
-      );
-    } else {
-      await axios.patch(
-        `https://a.klaviyo.com/api/profiles/${existingProfile.id}/`,
-        {
-          data: {
-            type: "profile",
-            id: existingProfile.id,
-            attributes: {
-              first_name: name || undefined,
-              phone_number: phone || undefined,
-              properties: profileProperties,
-            },
-          },
-        },
-        { headers }
-      );
-    }
+    const headers = getKlaviyoHeaders();
+    await syncQuizProfileToKlaviyo({
+      email,
+      name,
+      phone,
+      newsletterConsent,
+      kitConsigliato,
+      quizAnswers,
+    });
 
     if (newsletterConsent) {
       await axios.post(
