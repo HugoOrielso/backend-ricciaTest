@@ -982,9 +982,7 @@ app.post("/api/subscribe", async (req, res) => {
       success: true,
       emailError: false,
       coupon,
-      message: existingProfile?.id
-        ? "Existing user updated and email sent"
-        : "New user created and email sent",
+      message: "Klaviyo profile synced and email sent",
     });
   } catch (error) {
     console.error(error);
