@@ -173,13 +173,20 @@ async function findQuizSession(emailNormalized, sessionId) {
     headers,
     params: { select: "*", email_normalized: `eq.${emailNormalized}`, limit: 1 },
   });
-  if (byEmail?.[0] || !sessionId) return byEmail?.[0] || null;
+  if (byEmail?.[0]) {
+    return { session: byEmail[0], sessionId: byEmail[0].session_id || sessionId };
+  }
+  if (!sessionId) return { session: null, sessionId: crypto.randomUUID() };
 
   const { data: bySession } = await axios.get(`${url}/rest/v1/quiz_sessions`, {
     headers,
     params: { select: "*", session_id: `eq.${sessionId}`, limit: 1 },
   });
-  return bySession?.[0] || null;
+  const session = bySession?.[0] || null;
+  if (session && session.email_normalized !== emailNormalized) {
+    return { session: null, sessionId: crypto.randomUUID() };
+  }
+  return { session, sessionId };
 }
 
 async function saveQuizSession(existingSession, payload) {
@@ -210,6 +217,19 @@ async function updateQuizSession(id, values) {
   );
 }
 
+async function saveMetaLeadEvent(values) {
+  try {
+    const { url, headers } = getSupabaseConfig();
+    await axios.post(`${url}/rest/v1/meta_lead_events`, values, { headers });
+  } catch (error) {
+    console.error("[Meta CAPI] Unable to save event history", {
+      eventId: values.event_id,
+      status: error?.response?.status,
+      message: error?.response?.data?.message || error.message,
+    });
+  }
+}
+
 function getRequestIp(req) {
   const forwarded = req.headers["x-forwarded-for"];
   if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
@@ -234,6 +254,15 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
   const apiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
   const eventId = `quiz_lead_${session.id}_${crypto.randomUUID()}`;
   const attemptNumber = Number(session.meta_lead_attempts || 0) + 1;
+  const attemptedAt = new Date().toISOString();
+  const eventLog = {
+    quiz_session_id: session.id,
+    email_normalized: normalizeEmail(email),
+    event_id: eventId,
+    event_name: "Lead",
+    test_mode: Boolean(testEventCode),
+    attempted_at: attemptedAt,
+  };
 
   console.info("[Meta CAPI] Lead attempt", {
     sessionId: session.id,
@@ -246,7 +275,7 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
   await updateQuizSession(session.id, {
     meta_lead_event_id: eventId,
     meta_lead_attempts: attemptNumber,
-    meta_lead_last_attempt_at: new Date().toISOString(),
+    meta_lead_last_attempt_at: attemptedAt,
     meta_lead_http_status: null,
     meta_lead_response: null,
   });
@@ -259,6 +288,15 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
     await updateQuizSession(session.id, {
       meta_lead_error: "Meta Conversions API non configurata",
       meta_lead_response: {
+        stage: "configuration",
+        pixelConfigured: Boolean(pixelId),
+        tokenConfigured: Boolean(accessToken),
+      },
+    });
+    await saveMetaLeadEvent({
+      ...eventLog,
+      error: "Meta Conversions API non configurata",
+      response: {
         stage: "configuration",
         pixelConfigured: Boolean(pixelId),
         tokenConfigured: Boolean(accessToken),
@@ -311,6 +349,16 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
         fbtrace_id: metaResponse.data?.fbtrace_id ?? null,
       },
     });
+    await saveMetaLeadEvent({
+      ...eventLog,
+      sent_at: new Date().toISOString(),
+      http_status: metaResponse.status,
+      response: {
+        events_received: metaResponse.data?.events_received ?? null,
+        messages: metaResponse.data?.messages ?? [],
+        fbtrace_id: metaResponse.data?.fbtrace_id ?? null,
+      },
+    });
   } catch (error) {
     const message = error?.response?.data?.error?.message || error.message || "Errore Meta sconosciuto";
     const status = error?.response?.status || null;
@@ -328,6 +376,17 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
       meta_lead_error: String(message).slice(0, 1000),
       meta_lead_http_status: status,
       meta_lead_response: {
+        code: metaError?.code ?? null,
+        type: metaError?.type ?? null,
+        error_subcode: metaError?.error_subcode ?? null,
+        fbtrace_id: metaError?.fbtrace_id ?? null,
+      },
+    });
+    await saveMetaLeadEvent({
+      ...eventLog,
+      http_status: status,
+      error: String(message).slice(0, 1000),
+      response: {
         code: metaError?.code ?? null,
         type: metaError?.type ?? null,
         error_subcode: metaError?.error_subcode ?? null,
@@ -838,7 +897,7 @@ app.post("/api/subscribe", async (req, res) => {
     }
 
     const emailNormalized = normalizeEmail(email);
-    const normalizedSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)
+    const requestedSessionId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)
       ? sessionId
       : crypto.randomUUID();
     const kitConsigliato = Array.isArray(prodotti)
@@ -850,7 +909,10 @@ app.post("/api/subscribe", async (req, res) => {
       recommended_kits: Array.isArray(prodotti) ? prodotti : [],
       kit_consigliato: kitConsigliato || null,
     };
-    const existingQuizSession = await findQuizSession(emailNormalized, normalizedSessionId);
+    const {
+      session: existingQuizSession,
+      sessionId: normalizedSessionId,
+    } = await findQuizSession(emailNormalized, requestedSessionId);
     const existingCouponIsActive =
       existingQuizSession?.coupon_code &&
       existingQuizSession?.coupon_expires_at &&
