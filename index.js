@@ -396,6 +396,53 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
   }
 }
 
+async function trackMetaPageView({ req, sourceUrl }) {
+  const testEventCode = process.env.META_TEST_EVENT_CODE?.trim();
+  const pixelId = process.env.META_PIXEL_ID;
+  const accessToken = process.env.META_CONVERSIONS_API_TOKEN;
+  const apiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
+  const eventId = `quiz_pageview_${crypto.randomUUID()}`;
+
+  if (!pixelId || !accessToken) {
+    console.warn("[Meta CAPI] PageView skipped: missing environment variables", {
+      eventId,
+      pixelConfigured: Boolean(pixelId),
+      tokenConfigured: Boolean(accessToken),
+    });
+    return { eventId, sent: false };
+  }
+
+  const event = {
+    event_name: "PageView",
+    event_time: Math.floor(Date.now() / 1000),
+    event_id: eventId,
+    action_source: "website",
+    event_source_url: normalizeSourceUrl(sourceUrl),
+    user_data: {
+      client_ip_address: getRequestIp(req),
+      client_user_agent: req.headers["user-agent"],
+    },
+    custom_data: {
+      content_name: "Quiz Conosco i Miei Ricci",
+      content_category: "Quiz Funnel",
+    },
+  };
+
+  const body = { data: [event] };
+  if (testEventCode) body.test_event_code = testEventCode;
+  const metaResponse = await axios.post(
+    `https://graph.facebook.com/${apiVersion}/${pixelId}/events`,
+    body,
+    { params: { access_token: accessToken } }
+  );
+  console.info("[Meta CAPI] PageView accepted", {
+    eventId,
+    status: metaResponse.status,
+    eventsReceived: metaResponse.data?.events_received,
+  });
+  return { eventId, sent: true };
+}
+
 const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -862,6 +909,19 @@ async function creaShopifyCoupon() {
     expiresAt: endsAt.toISOString(),
   };
 }
+
+app.post("/api/pageview", async (req, res) => {
+  try {
+    const result = await trackMetaPageView({ req, sourceUrl: req.body?.sourceUrl });
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error("[Meta CAPI] PageView rejected", {
+      status: error?.response?.status,
+      message: error?.response?.data?.error?.message || error.message,
+    });
+    return res.status(200).json({ success: false });
+  }
+});
 
 app.post("/api/subscribe", async (req, res) => {
   try {
