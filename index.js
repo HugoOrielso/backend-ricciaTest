@@ -226,12 +226,13 @@ function normalizeSourceUrl(value) {
 }
 
 async function trackMetaLead({ req, session, email, sourceUrl }) {
-  if (!session?.id || session.meta_lead_sent_at) return;
+  const testEventCode = process.env.META_TEST_EVENT_CODE?.trim();
+  if (!session?.id) return;
 
   const pixelId = process.env.META_PIXEL_ID;
   const accessToken = process.env.META_CONVERSIONS_API_TOKEN;
   const apiVersion = process.env.META_GRAPH_API_VERSION || "v25.0";
-  const eventId = session.meta_lead_event_id || `quiz_lead_${session.id}`;
+  const eventId = `quiz_lead_${session.id}_${crypto.randomUUID()}`;
   const attemptNumber = Number(session.meta_lead_attempts || 0) + 1;
 
   console.info("[Meta CAPI] Lead attempt", {
@@ -240,7 +241,7 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
     attemptNumber,
     pixelConfigured: Boolean(pixelId),
     tokenConfigured: Boolean(accessToken),
-    testMode: Boolean(process.env.META_TEST_EVENT_CODE),
+    testMode: Boolean(testEventCode),
   });
   await updateQuizSession(session.id, {
     meta_lead_event_id: eventId,
@@ -287,7 +288,7 @@ async function trackMetaLead({ req, session, email, sourceUrl }) {
 
   try {
     const body = { data: [event] };
-    if (process.env.META_TEST_EVENT_CODE) body.test_event_code = process.env.META_TEST_EVENT_CODE;
+    if (testEventCode) body.test_event_code = testEventCode;
     const metaResponse = await axios.post(
       `https://graph.facebook.com/${apiVersion}/${pixelId}/events`,
       body,
