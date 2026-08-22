@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model QuizSession {
+  id                        String          @id @default(uuid()) @db.Uuid
+  session_id                String          @unique @db.Uuid
+  email_normalized          String          @unique
+  name                      String?
+  answers                   Json            @default("[]")
+  recommended_kits          Json            @default("[]")
+  kit_consigliato           String?         @db.Text
+  coupon_code               String?
+  coupon_percent            Int?
+  coupon_created_at         DateTime?
+  coupon_expires_at         DateTime?
+  coupon_status             String?
+  klaviyo_synced            Boolean         @default(false)
+  email_sent                Boolean         @default(false)
+  meta_lead_event_id        String?
+  meta_lead_attempts        Int             @default(0)
+  meta_lead_last_attempt_at DateTime?
+  meta_lead_sent_at         DateTime?
+  meta_lead_error           String?         @db.Text
+  meta_lead_http_status     Int?
+  meta_lead_response        Json?
+  created_at                DateTime         @default(now())
+  updated_at                DateTime         @updatedAt
+  meta_lead_events          MetaLeadEvent[]
+
+  @@index([coupon_expires_at])
+  @@map("quiz_sessions")
+}
+
+model MetaLeadEvent {
+  id               String      @id @default(uuid()) @db.Uuid
+  quiz_session_id  String      @db.Uuid
+  email_normalized String
+  event_id         String      @unique
+  event_name       String
+  test_mode        Boolean     @default(false)
+  attempted_at     DateTime
+  sent_at          DateTime?
+  http_status      Int?
+  error            String?     @db.Text
+  response         Json?
+  created_at       DateTime    @default(now())
+  quiz_session     QuizSession @relation(fields: [quiz_session_id], references: [id], onDelete: Cascade)
+
+  @@index([quiz_session_id, attempted_at(sort: Desc)])
+  @@map("meta_lead_events")
+}

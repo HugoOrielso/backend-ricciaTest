@@ -3,8 +3,9 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { Resend } from "resend";
 import MailChecker from "mailchecker";
-import dns from "dns/promises";
 import crypto from "crypto";
+import { Prisma } from "@prisma/client";
+import { prisma } from "./db.js";
 
 async function validaEmail(email) {
   const formatoOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -12,16 +13,6 @@ async function validaEmail(email) {
 
   if (!MailChecker.isValid(email)) {
     return { valido: false, motivo: "Email temporanea non accettata." };
-  }
-
-  const dominio = email.split("@")[1];
-  try {
-    const mx = await dns.resolveMx(dominio);
-    if (!mx || mx.length === 0) {
-      return { valido: false, motivo: "Il dominio email non esiste." };
-    }
-  } catch {
-    return { valido: false, motivo: "Il dominio email non esiste." };
   }
 
   return { valido: true };
@@ -161,40 +152,39 @@ async function syncQuizProfileToKlaviyo({
 
 dotenv.config();
 
-function getSupabaseConfig() {
-  const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) throw new Error("Supabase non è configurato nel backend");
-  return {
-    url,
-    headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
-      "Content-Type": "application/json",
-    },
-  };
-}
-
 function normalizeEmail(email) {
   return String(email).trim().toLowerCase();
 }
 
+const quizSessionDateFields = new Set([
+  "coupon_created_at",
+  "coupon_expires_at",
+  "meta_lead_last_attempt_at",
+  "meta_lead_sent_at",
+]);
+
+function normalizeQuizSessionData(payload) {
+  return Object.fromEntries(
+    Object.entries(payload).map(([key, value]) => {
+      if (quizSessionDateFields.has(key) && value) return [key, new Date(value)];
+      if (key === "meta_lead_response" && value === null) return [key, Prisma.DbNull];
+      return [key, value];
+    })
+  );
+}
+
 async function findQuizSession(emailNormalized, sessionId) {
-  const { url, headers } = getSupabaseConfig();
-  const { data: byEmail } = await axios.get(`${url}/rest/v1/quiz_sessions`, {
-    headers,
-    params: { select: "*", email_normalized: `eq.${emailNormalized}`, limit: 1 },
+  const byEmail = await prisma.quizSession.findUnique({
+    where: { email_normalized: emailNormalized },
   });
-  if (byEmail?.[0]) {
-    return { session: byEmail[0], sessionId: byEmail[0].session_id || sessionId };
+  if (byEmail) {
+    return { session: byEmail, sessionId: byEmail.session_id || sessionId };
   }
   if (!sessionId) return { session: null, sessionId: crypto.randomUUID() };
 
-  const { data: bySession } = await axios.get(`${url}/rest/v1/quiz_sessions`, {
-    headers,
-    params: { select: "*", session_id: `eq.${sessionId}`, limit: 1 },
+  const session = await prisma.quizSession.findUnique({
+    where: { session_id: sessionId },
   });
-  const session = bySession?.[0] || null;
   if (session && session.email_normalized !== emailNormalized) {
     return { session: null, sessionId: crypto.randomUUID() };
   }
@@ -202,37 +192,33 @@ async function findQuizSession(emailNormalized, sessionId) {
 }
 
 async function saveQuizSession(existingSession, payload) {
-  const { url, headers } = getSupabaseConfig();
+  const data = normalizeQuizSessionData(payload);
   if (existingSession?.id) {
-    const { data } = await axios.patch(
-      `${url}/rest/v1/quiz_sessions`,
-      { ...payload, updated_at: new Date().toISOString() },
-      { headers: { ...headers, Prefer: "return=representation" }, params: { id: `eq.${existingSession.id}` } }
-    );
-    return data?.[0];
+    return prisma.quizSession.update({
+      where: { id: existingSession.id },
+      data,
+    });
   }
-  const { data } = await axios.post(
-    `${url}/rest/v1/quiz_sessions`,
-    payload,
-    { headers: { ...headers, Prefer: "return=representation" } }
-  );
-  return data?.[0];
+  return prisma.quizSession.create({ data });
 }
 
 async function updateQuizSession(id, values) {
   if (!id) return;
-  const { url, headers } = getSupabaseConfig();
-  await axios.patch(
-    `${url}/rest/v1/quiz_sessions`,
-    { ...values, updated_at: new Date().toISOString() },
-    { headers, params: { id: `eq.${id}` } }
-  );
+  await prisma.quizSession.update({
+    where: { id },
+    data: normalizeQuizSessionData(values),
+  });
 }
 
 async function saveMetaLeadEvent(values) {
   try {
-    const { url, headers } = getSupabaseConfig();
-    await axios.post(`${url}/rest/v1/meta_lead_events`, values, { headers });
+    const data = {
+      ...values,
+      attempted_at: new Date(values.attempted_at),
+      ...(values.sent_at && { sent_at: new Date(values.sent_at) }),
+      ...(values.response === null && { response: Prisma.DbNull }),
+    };
+    await prisma.metaLeadEvent.create({ data });
   } catch (error) {
     console.error("[Meta CAPI] Unable to save event history", {
       eventId: values.event_id,
@@ -948,6 +934,13 @@ app.post("/api/pageview", async (req, res) => {
 });
 
 app.post("/api/subscribe", async (req, res) => {
+  const requestId = crypto.randomUUID();
+  let currentStage = "request";
+  const logStage = (stage, details = {}) => {
+    currentStage = stage;
+    console.info(`[Subscribe:${requestId}] ${stage}`, details);
+  };
+
   try {
     const {
       email,
@@ -966,6 +959,12 @@ app.post("/api/subscribe", async (req, res) => {
       sessionId,
       sourceUrl,
     } = req.body;
+
+    logStage("validation", {
+      hasEmail: Boolean(email),
+      hasRoutine: typeof rutina === "string" && Boolean(rutina.trim()),
+      productCount: Array.isArray(prodotti) ? prodotti.length : 0,
+    });
 
     if (!email) {
       return res.status(400).json({ success: false, message: "Email is required" });
@@ -1001,6 +1000,7 @@ app.post("/api/subscribe", async (req, res) => {
       kit_consigliato: kitConsigliato || null,
     };
     const sendRoutineEmail = async () => {
+      logStage("email:render");
       const lineas = rutina.split("\n- ").filter((r) => r.trim() !== "");
       const passi = lineas.slice(1);
       const html = generaEmailHTML({
@@ -1015,6 +1015,7 @@ app.post("/api/subscribe", async (req, res) => {
           normalizeOptionalTextList(consiglioSituazioni),
       });
 
+      logStage("email:send", { recipientDomain: email.split("@")[1] });
       const { data, error } = await resend.emails.send({
         from: "La Ragazza Riccia <info@laragazzariccia.com>",
         to: email,
@@ -1029,9 +1030,10 @@ app.post("/api/subscribe", async (req, res) => {
         throw sendError;
       }
 
-      console.log("Routine email accepted by Resend:", data?.id);
+      logStage("email:accepted", { resendId: data?.id });
       return data;
     };
+    logStage("database:find-session");
     const {
       session: existingQuizSession,
       sessionId: normalizedSessionId,
@@ -1042,11 +1044,13 @@ app.post("/api/subscribe", async (req, res) => {
       new Date(existingQuizSession.coupon_expires_at).getTime() > Date.now();
 
     if (existingCouponIsActive) {
+      logStage("database:update-session", { reusedCoupon: true });
       const refreshedQuizSession = await saveQuizSession(existingQuizSession, sessionData);
       await sendRoutineEmail();
       await updateQuizSession(refreshedQuizSession?.id, { email_sent: true });
 
       try {
+        logStage("integrations:existing-session");
         await trackMetaLead({ req, session: refreshedQuizSession, email, sourceUrl });
         await syncQuizProfileToKlaviyo({
           email,
@@ -1061,6 +1065,7 @@ app.post("/api/subscribe", async (req, res) => {
         console.error("Post-email integration error:", integrationError);
       }
 
+      logStage("complete", { reusedCoupon: true });
       return res.status(200).json({
         success: true,
         emailError: false,
@@ -1074,8 +1079,10 @@ app.post("/api/subscribe", async (req, res) => {
       });
     }
 
+    logStage("coupon:create");
     const coupon = await creaShopifyCoupon();
     console.log("Coupon Shopify creato:", coupon.code);
+    logStage("database:create-session");
     const savedQuizSession = await saveQuizSession(existingQuizSession, {
       ...sessionData,
       ...(!existingQuizSession && { session_id: normalizedSessionId, email_normalized: emailNormalized }),
@@ -1091,6 +1098,7 @@ app.post("/api/subscribe", async (req, res) => {
     await updateQuizSession(savedQuizSession?.id, { email_sent: true });
 
     try {
+      logStage("integrations:new-session");
       await trackMetaLead({ req, session: savedQuizSession, email, sourceUrl });
 
       const headers = getKlaviyoHeaders();
@@ -1140,6 +1148,7 @@ app.post("/api/subscribe", async (req, res) => {
       console.error("Post-email integration error:", integrationError);
     }
 
+    logStage("complete", { reusedCoupon: false });
     return res.status(200).json({
       success: true,
       emailError: false,
@@ -1147,14 +1156,34 @@ app.post("/api/subscribe", async (req, res) => {
       message: "Klaviyo profile synced and email sent",
     });
   } catch (error) {
-    console.error(error);
-    return res.status(error?.statusCode || error?.response?.status || 500).json({
+    const status = error?.statusCode || error?.response?.status || 500;
+    const message =
+      error?.response?.data?.errors?.[0]?.detail ||
+      error?.response?.data?.error?.message ||
+      error?.message ||
+      "Internal server error";
+    const errorDetails = {
+      requestId,
+      stage: currentStage,
+      status,
+      name: error?.name,
+      code: error?.code || error?.cause?.code,
+      message,
+    };
+    console.error(`[Subscribe:${requestId}] failed`, errorDetails);
+    if (process.env.NODE_ENV !== "production" && error?.stack) {
+      console.error(error.stack);
+    }
+    return res.status(status).json({
       success: false,
-      message:
-        error?.response?.data?.errors?.[0]?.detail ||
-        error?.message ||
-        "Internal server error",
-      error: error?.response?.data || error.message,
+      message: process.env.NODE_ENV === "production"
+        ? "Internal server error"
+        : `${currentStage}: ${message}`,
+      error: {
+        requestId,
+        stage: currentStage,
+        code: errorDetails.code || null,
+      },
     });
   }
 });
@@ -1261,7 +1290,7 @@ app.post("/api/subscribe-salone", async (req, res) => {
 
 const port = Number(process.env.PORT) || 3000;
 const host = process.env.HOST || "0.0.0.0";
-const server = app.listen(port, host, () => {
+const server = app.listen(port, () => {
   console.log(`Riccia Test API listening on http://${host}:${port}`);
 });
 
