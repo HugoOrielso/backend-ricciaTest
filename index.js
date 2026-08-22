@@ -466,7 +466,7 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://frontend-riccia-test.vercel.app",
   "https://laragazzariccia.com",
-  "https://frontend-riccia-test-h3ak8yb81-hugos-projects-f083374c.vercel.app"
+  "https://frontend-riccia-test-qhyizd7i0-hugos-projects-f083374c.vercel.app"
 ];
 
 app.use((req, res, next) => {
