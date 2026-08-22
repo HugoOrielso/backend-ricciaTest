@@ -43,6 +43,18 @@ function normalizeOptionalText(value) {
   return normalized || undefined;
 }
 
+function normalizeOptionalTextList(value) {
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map((item) => normalizeOptionalText(item))
+      .filter(Boolean);
+    return normalized.length ? normalized : undefined;
+  }
+
+  const normalized = normalizeOptionalText(value);
+  return normalized ? normalized.split(/\n\s*\n/) : undefined;
+}
+
 function buildQuizProperties(quizAnswers = []) {
   if (!Array.isArray(quizAnswers)) return {};
 
@@ -604,7 +616,7 @@ function generaEmailHTML({
           </tr>`
     : "";
 
-  const consiglioSTSHTML = consiglioSTS
+  const consiglioSTSHTML = consiglioSTS?.length
     ? `
           <tr>
             <td class="content-cell" style="background: white; padding: 4px 34px 24px 34px;">
@@ -614,11 +626,7 @@ function generaEmailHTML({
                     <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
                       Un consiglio per questo momento
                     </p>
-                    ${consiglioSTS.split(/\n\s*\n/).map((testo) => {
-      const match = testo.match(/^(\d+\.\s*)([^.]+\.)(.*)$/s);
-      if (!match) return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</p>`;
-      return `<p style="margin: 0 0 12px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;"><strong>${escapeHtml(match[1] + match[2])}</strong>${escapeHtml(match[3])}</p>`;
-    }).join("")}
+                    ${consiglioSTS.map((testo) => `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 0 0 12px 0; background: #ffffff; border: 1px solid ${PINK_MID}; border-radius: 10px;"><tr><td style="padding: 14px; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</td></tr></table>`).join("")}
                   </td>
                 </tr>
               </table>
@@ -1074,8 +1082,8 @@ app.post("/api/subscribe", async (req, res) => {
         consiglioStyling: normalizeOptionalText(consiglioStyling),
         consiglioLavaggio: normalizeOptionalText(consiglioLavaggio),
         consiglioSTS:
-          normalizeOptionalText(consiglioSTS) ||
-          normalizeOptionalText(consiglioSituazioni),
+          normalizeOptionalTextList(consiglioSTS) ||
+          normalizeOptionalTextList(consiglioSituazioni),
       });
 
       const { data: resendData, error: resendError } = await resend.emails.send({
