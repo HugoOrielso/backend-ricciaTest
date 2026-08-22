@@ -457,22 +457,29 @@ async function trackMetaPageView({ req, sourceUrl }) {
 
 const app = express();
 const resend = new Resend(process.env.RESEND_API_KEY);
+app.set("trust proxy", 1);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const allowedOrigins = [
+const defaultAllowedOrigins = [
   "http://localhost:5173",
   "http://localhost:3000",
   "https://frontend-riccia-test.vercel.app",
   "https://laragazzariccia.com",
   "https://frontend-riccia-test-qhyizd7i0-hugos-projects-f083374c.vercel.app"
 ];
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = new Set([...defaultAllowedOrigins, ...configuredOrigins]);
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
+  if (origin && allowedOrigins.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
   }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
@@ -482,11 +489,20 @@ app.use((req, res, next) => {
 
 app.get("/", (req, res) => {
   res.status(200).json({
-    message: "on vercel",
-    version: "meta-capi-diagnostics-v1",
+    message: "Riccia Test API",
+    runtime: "express",
+    version: "express-v1",
     metaConfigured: Boolean(
       process.env.META_PIXEL_ID && process.env.META_CONVERSIONS_API_TOKEN
     ),
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
   });
 });
 
@@ -1242,5 +1258,25 @@ app.post("/api/subscribe-salone", async (req, res) => {
     });
   }
 });
+
+const port = Number(process.env.PORT) || 3000;
+const host = process.env.HOST || "0.0.0.0";
+const server = app.listen(port, host, () => {
+  console.log(`Riccia Test API listening on http://${host}:${port}`);
+});
+
+function shutdown(signal) {
+  console.log(`${signal} received, closing HTTP server`);
+  server.close((error) => {
+    if (error) {
+      console.error("Error while closing HTTP server:", error);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 export default app;
