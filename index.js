@@ -27,6 +27,18 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
+function renderAdviceParagraphs(value) {
+  return String(value || "")
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .filter(Boolean)
+    .map(
+      (sentence, index, sentences) =>
+        `<p style="margin: 0 0 ${index === sentences.length - 1 ? "0" : "12px"} 0; font-family: Arial, sans-serif; font-size: 15px; color: #72243E; line-height: 1.7;">${escapeHtml(sentence)}</p>`
+    )
+    .join("");
+}
+
 function normalizeOptionalText(value) {
   if (typeof value !== "string") return undefined;
 
@@ -572,9 +584,7 @@ function generaEmailHTML({
                     <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
                       Il consiglio per i tuoi ricci
                     </p>
-                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
-                      ${escapeHtml(consiglio)}
-                    </p>
+                    ${renderAdviceParagraphs(consiglio)}
                   </td>
                 </tr>
               </table>
@@ -590,9 +600,7 @@ function generaEmailHTML({
                     <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
                       Nota di styling
                     </p>
-                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
-                      ${escapeHtml(consiglioStyling)}
-                    </p>
+                    ${renderAdviceParagraphs(consiglioStyling)}
                   </td>
                 </tr>
               </table>`
@@ -608,9 +616,7 @@ function generaEmailHTML({
                     <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: #E82176; text-transform: uppercase; letter-spacing: 0.08em;">
                       Consiglio di lavaggio
                     </p>
-                    <p style="margin: 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">
-                      ${escapeHtml(consiglioLavaggio)}
-                    </p>
+                    ${renderAdviceParagraphs(consiglioLavaggio)}
                   </td>
                 </tr>
               </table>
@@ -628,7 +634,7 @@ function generaEmailHTML({
                     <p style="margin: 0 0 10px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
                       Un consiglio per questo momento
                     </p>
-                    ${consiglioSTS.map((testo) => `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 0 0 12px 0; background: #ffffff; border: 1px solid ${PINK_MID}; border-radius: 10px;"><tr><td style="padding: 14px; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.7;">${escapeHtml(testo)}</td></tr></table>`).join("")}
+                    ${consiglioSTS.map((testo) => `<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin: 0 0 12px 0; background: #ffffff; border: 1px solid ${PINK_MID}; border-radius: 10px;"><tr><td style="padding: 14px;">${renderAdviceParagraphs(testo)}</td></tr></table>`).join("")}
                   </td>
                 </tr>
               </table>
