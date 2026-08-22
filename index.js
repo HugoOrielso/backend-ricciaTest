@@ -955,6 +955,13 @@ app.post("/api/subscribe", async (req, res) => {
       return res.status(400).json({ success: false, message: "Email is required" });
     }
 
+    if (typeof rutina !== "string" || !rutina.trim() || !Array.isArray(prodotti) || !prodotti.length) {
+      return res.status(400).json({
+        success: false,
+        message: "La routine e i prodotti consigliati sono obbligatori.",
+      });
+    }
+
     const { valido, motivo } = await validaEmail(email);
     if (!valido) {
       return res.status(400).json({
@@ -977,6 +984,38 @@ app.post("/api/subscribe", async (req, res) => {
       recommended_kits: Array.isArray(prodotti) ? prodotti : [],
       kit_consigliato: kitConsigliato || null,
     };
+    const sendRoutineEmail = async () => {
+      const lineas = rutina.split("\n- ").filter((r) => r.trim() !== "");
+      const passi = lineas.slice(1);
+      const html = generaEmailHTML({
+        nome: name || "amica",
+        passi,
+        prodotti,
+        consiglio: normalizeOptionalText(consiglio),
+        consiglioStyling: normalizeOptionalText(consiglioStyling),
+        consiglioLavaggio: normalizeOptionalText(consiglioLavaggio),
+        consiglioSTS:
+          normalizeOptionalTextList(consiglioSTS) ||
+          normalizeOptionalTextList(consiglioSituazioni),
+      });
+
+      const { data, error } = await resend.emails.send({
+        from: "La Ragazza Riccia <info@laragazzariccia.com>",
+        to: email,
+        subject: `La tua routine personalizzata è pronta, ${name || "amica"}!`,
+        html,
+      });
+
+      if (error) {
+        console.error("Resend error:", error);
+        const sendError = new Error(error.message || "Resend non ha accettato l'email");
+        sendError.statusCode = 502;
+        throw sendError;
+      }
+
+      console.log("Routine email accepted by Resend:", data?.id);
+      return data;
+    };
     const {
       session: existingQuizSession,
       sessionId: normalizedSessionId,
@@ -988,16 +1027,24 @@ app.post("/api/subscribe", async (req, res) => {
 
     if (existingCouponIsActive) {
       const refreshedQuizSession = await saveQuizSession(existingQuizSession, sessionData);
-      await trackMetaLead({ req, session: refreshedQuizSession, email, sourceUrl });
-      await syncQuizProfileToKlaviyo({
-        email,
-        name,
-        phone,
-        newsletterConsent,
-        kitConsigliato,
-        quizAnswers,
-      });
-      await updateQuizSession(refreshedQuizSession?.id, { klaviyo_synced: true });
+      await sendRoutineEmail();
+      await updateQuizSession(refreshedQuizSession?.id, { email_sent: true });
+
+      try {
+        await trackMetaLead({ req, session: refreshedQuizSession, email, sourceUrl });
+        await syncQuizProfileToKlaviyo({
+          email,
+          name,
+          phone,
+          newsletterConsent,
+          kitConsigliato,
+          quizAnswers,
+        });
+        await updateQuizSession(refreshedQuizSession?.id, { klaviyo_synced: true });
+      } catch (integrationError) {
+        console.error("Post-email integration error:", integrationError);
+      }
+
       return res.status(200).json({
         success: true,
         emailError: false,
@@ -1007,7 +1054,7 @@ app.post("/api/subscribe", async (req, res) => {
           percent: existingQuizSession.coupon_percent,
           expiresAt: existingQuizSession.coupon_expires_at,
         },
-        message: "Coupon esistente recuperato",
+        message: "Coupon esistente recuperato e routine inviata",
       });
     }
 
@@ -1024,89 +1071,57 @@ app.post("/api/subscribe", async (req, res) => {
       klaviyo_synced: false,
       email_sent: false,
     });
-    await trackMetaLead({ req, session: savedQuizSession, email, sourceUrl });
+    await sendRoutineEmail();
+    await updateQuizSession(savedQuizSession?.id, { email_sent: true });
 
-    const headers = getKlaviyoHeaders();
-    await syncQuizProfileToKlaviyo({
-      email,
-      name,
-      phone,
-      newsletterConsent,
-      kitConsigliato,
-      quizAnswers,
-    });
+    try {
+      await trackMetaLead({ req, session: savedQuizSession, email, sourceUrl });
 
-    if (newsletterConsent) {
-      await axios.post(
-        "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
-        {
-          data: {
-            type: "profile-subscription-bulk-create-job",
-            attributes: {
-              profiles: {
-                data: [
-                  {
-                    type: "profile",
-                    attributes: {
-                      email,
-                      subscriptions: {
-                        email: { marketing: { consent: "SUBSCRIBED" } },
+      const headers = getKlaviyoHeaders();
+      await syncQuizProfileToKlaviyo({
+        email,
+        name,
+        phone,
+        newsletterConsent,
+        kitConsigliato,
+        quizAnswers,
+      });
+
+      if (newsletterConsent) {
+        await axios.post(
+          "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
+          {
+            data: {
+              type: "profile-subscription-bulk-create-job",
+              attributes: {
+                profiles: {
+                  data: [
+                    {
+                      type: "profile",
+                      attributes: {
+                        email,
+                        subscriptions: {
+                          email: { marketing: { consent: "SUBSCRIBED" } },
+                        },
                       },
                     },
-                  },
-                ],
+                  ],
+                },
               },
-            },
-            relationships: {
-              list: {
-                data: { type: "list", id: process.env.KLAVIYO_LIST_ID },
+              relationships: {
+                list: {
+                  data: { type: "list", id: process.env.KLAVIYO_LIST_ID },
+                },
               },
             },
           },
-        },
-        { headers }
-      );
-    }
-
-    await updateQuizSession(savedQuizSession?.id, { klaviyo_synced: true });
-
-    if (rutina && prodotti) {
-      const lineas = rutina.split("\n- ").filter((r) => r.trim() !== "");
-      const passi = lineas.slice(1);
-
-      const html = generaEmailHTML({
-        nome: name || "amica",
-        passi,
-        prodotti,
-        consiglio: normalizeOptionalText(consiglio),
-        consiglioStyling: normalizeOptionalText(consiglioStyling),
-        consiglioLavaggio: normalizeOptionalText(consiglioLavaggio),
-        consiglioSTS:
-          normalizeOptionalTextList(consiglioSTS) ||
-          normalizeOptionalTextList(consiglioSituazioni),
-      });
-
-      const { data: resendData, error: resendError } = await resend.emails.send({
-        from: "La Ragazza Riccia <info@laragazzariccia.com>",
-        to: email,
-        subject: `La tua routine personalizzata è pronta, ${name || "amica"}!`,
-        html,
-      });
-
-      console.log(resendError, resendData);
-
-      if (resendError) {
-        console.error("Resend error:", resendError);
-        return res.status(200).json({
-          success: true,
-          emailError: true,
-          coupon,
-          message: "Iscrizione completata, ma l'email non è stata consegnata.",
-          resendError: resendError.message,
-        });
+          { headers }
+        );
       }
 
-      await updateQuizSession(savedQuizSession?.id, { email_sent: true });
+      await updateQuizSession(savedQuizSession?.id, { klaviyo_synced: true });
+    } catch (integrationError) {
+      console.error("Post-email integration error:", integrationError);
     }
 
     return res.status(200).json({
@@ -1117,10 +1132,12 @@ app.post("/api/subscribe", async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    return res.status(error?.response?.status || 500).json({
+    return res.status(error?.statusCode || error?.response?.status || 500).json({
       success: false,
       message:
-        error?.response?.data?.errors?.[0]?.detail || "Internal server error",
+        error?.response?.data?.errors?.[0]?.detail ||
+        error?.message ||
+        "Internal server error",
       error: error?.response?.data || error.message,
     });
   }
