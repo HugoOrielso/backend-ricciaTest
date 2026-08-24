@@ -117,7 +117,7 @@ async function syncQuizProfileToKlaviyo({
   const existingProfile = searchResponse.data?.data?.[0];
   const profileProperties = {
     privacy_policy_confirmed: true,
-    newsletter_opt_in: Boolean(newsletterConsent),
+    newsletter_opt_in: true,
     kit_consigliato: kitConsigliato,
     ...buildQuizProperties(quizAnswers),
   };
@@ -159,6 +159,96 @@ async function syncQuizProfileToKlaviyo({
   console.log("[Klaviyo] Quiz profile synced", {
     profileId: existingProfile?.id || "created",
     answerCount: Array.isArray(quizAnswers) ? quizAnswers.length : 0,
+  });
+}
+
+async function trackQuizCompletedInKlaviyo({
+  email,
+  name,
+  phone,
+  sessionId,
+  newsletterConsent,
+  prodotti,
+  coupon,
+  consiglio,
+  consiglioStyling,
+  consiglioLavaggio,
+}) {
+  const isTestMode = process.env.KLAVIYO_TEST_MODE
+    ? process.env.KLAVIYO_TEST_MODE === "true"
+    : process.env.NODE_ENV !== "production";
+  const metricName = isTestMode
+    ? "Riccia Quiz Completed - Test"
+    : "Riccia Quiz Completed";
+  const eventUniqueId = isTestMode
+    ? crypto.randomUUID()
+    : `${sessionId}:${coupon.code}`;
+  const primaryProduct = Array.isArray(prodotti) ? prodotti[0] : undefined;
+  const recommendedProducts = Array.isArray(prodotti)
+    ? prodotti.map((prodotto) => ({
+        name: prodotto?.nome || "",
+        description: prodotto?.descrizione || "",
+        url: prodotto?.link || "",
+        image_url: prodotto?.immagine || "",
+      }))
+    : [];
+
+  await axios.post(
+    "https://a.klaviyo.com/api/events/",
+    {
+      data: {
+        type: "event",
+        attributes: {
+          unique_id: eventUniqueId,
+          properties: {
+            quiz_session_id: sessionId,
+            newsletter_consent: true,
+            test_mode: isTestMode,
+            kit_name: primaryProduct?.nome || "Routine personalizzata",
+            kit_url: primaryProduct?.link || "https://laragazzariccia.com",
+            product_name: primaryProduct?.nome || "Routine personalizzata",
+            product_description: primaryProduct?.descrizione || "",
+            product_url: primaryProduct?.link || "https://laragazzariccia.com",
+            product_image_url: primaryProduct?.immagine || "",
+            recommended_products: recommendedProducts,
+            recommended_product_names: recommendedProducts
+              .map((prodotto) => prodotto.name)
+              .filter(Boolean),
+            usage_tip:
+              normalizeOptionalText(consiglio) ||
+              normalizeOptionalText(consiglioStyling) ||
+              normalizeOptionalText(consiglioLavaggio) ||
+              "Segui la routine personalizzata ricevuta via email.",
+            coupon_code: coupon.code,
+            coupon_percent: Number(coupon.percent),
+            coupon_expires_at: new Date(coupon.expiresAt).toISOString(),
+          },
+          metric: {
+            data: {
+              type: "metric",
+              attributes: { name: metricName },
+            },
+          },
+          profile: {
+            data: {
+              type: "profile",
+              attributes: {
+                email,
+                first_name: name || undefined,
+                phone_number: phone || undefined,
+              },
+            },
+          },
+        },
+      },
+    },
+    { headers: getKlaviyoHeaders() }
+  );
+
+  console.log(`[Klaviyo] ${metricName} event accepted`, {
+    sessionId,
+    couponCode: coupon.code,
+    testMode: isTestMode,
   });
 }
 
@@ -512,6 +602,7 @@ function generaEmailHTML({
   consiglioStyling,
   consiglioLavaggio,
   consiglioSTS,
+  coupon,
 }) {
   const LOGO_URL =
     "https://laragazzariccia.com/cdn/shop/files/logo_riccia_2026_2x_08368373-224e-4a3c-9095-ee095c1f98a8.png";
@@ -642,6 +733,40 @@ function generaEmailHTML({
           </tr>`
     : "";
 
+  const couponExpiresAt = coupon?.expiresAt
+    ? new Intl.DateTimeFormat("it-IT", {
+        dateStyle: "short",
+        timeStyle: "short",
+        timeZone: "Europe/Rome",
+      }).format(new Date(coupon.expiresAt))
+    : "";
+  const couponProductUrl = prodotti?.[0]?.link || "https://laragazzariccia.com";
+  const couponHTML = coupon?.code
+    ? `
+          <tr>
+            <td class="content-cell" style="background: white; padding: 8px 34px 24px 34px;">
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background: ${PINK_LIGHT}; border: 1.5px solid ${PINK_MID}; border-radius: 14px;">
+                <tr>
+                  <td style="padding: 22px; text-align: center;">
+                    <p style="margin: 0 0 8px 0; font-family: Arial, sans-serif; font-size: 14px; font-weight: 800; color: ${PINK}; text-transform: uppercase; letter-spacing: 0.08em;">
+                      Un regalo, solo per te che hai fatto il quiz
+                    </p>
+                    <p style="margin: 0 0 14px 0; font-family: Arial, sans-serif; font-size: 15px; color: ${TEXT_MID}; line-height: 1.6;">
+                      Usa il codice qui sotto per ottenere il <strong>${escapeHtml(coupon.percent)}% di sconto</strong> sulla tua routine consigliata. Il codice è valido per 48 ore, fino al ${escapeHtml(couponExpiresAt)}.
+                    </p>
+                    <p style="margin: 0 0 18px 0; font-family: Arial, sans-serif; font-size: 24px; font-weight: 800; color: ${TEXT_DARK}; letter-spacing: 0.08em;">
+                      ${escapeHtml(coupon.code)}
+                    </p>
+                    <a href="${escapeHtml(couponProductUrl)}" target="_blank" style="display: inline-block; padding: 13px 24px; border-radius: 999px; background: ${PINK}; color: #ffffff; font-family: Arial, sans-serif; font-size: 15px; font-weight: 800; text-decoration: none;">
+                      Scopri la tua routine
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="it">
 <head>
@@ -702,6 +827,8 @@ function generaEmailHTML({
           ${consiglioHTML}
 
           ${consiglioSTSHTML}
+
+          ${couponHTML}
 
           <tr>
             <td class="content-cell" style="background: white; padding: 6px 26px 12px 26px;">
@@ -1005,7 +1132,7 @@ app.post("/api/subscribe", async (req, res) => {
       recommended_kits: Array.isArray(prodotti) ? prodotti : [],
       kit_consigliato: kitConsigliato || null,
     };
-    const sendRoutineEmail = async () => {
+    const sendRoutineEmail = async (couponForEmail) => {
       logStage("email:render");
       const lineas = rutina.split("\n- ").filter((r) => r.trim() !== "");
       const passi = lineas.slice(1);
@@ -1019,6 +1146,7 @@ app.post("/api/subscribe", async (req, res) => {
         consiglioSTS:
           normalizeOptionalTextList(consiglioSTS) ||
           normalizeOptionalTextList(consiglioSituazioni),
+        coupon: couponForEmail,
       });
 
       logStage("email:send", { recipientDomain: email.split("@")[1] });
@@ -1052,7 +1180,12 @@ app.post("/api/subscribe", async (req, res) => {
     if (existingCouponIsActive) {
       logStage("database:update-session", { reusedCoupon: true });
       const refreshedQuizSession = await saveQuizSession(existingQuizSession, sessionData);
-      await sendRoutineEmail();
+      const existingCoupon = {
+        code: existingQuizSession.coupon_code,
+        percent: existingQuizSession.coupon_percent,
+        expiresAt: existingQuizSession.coupon_expires_at,
+      };
+      await sendRoutineEmail(existingCoupon);
       await updateQuizSession(refreshedQuizSession?.id, { email_sent: true });
 
       try {
@@ -1065,6 +1198,47 @@ app.post("/api/subscribe", async (req, res) => {
           newsletterConsent,
           kitConsigliato,
           quizAnswers,
+        });
+        await axios.post(
+          "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
+          {
+            data: {
+              type: "profile-subscription-bulk-create-job",
+              attributes: {
+                profiles: {
+                  data: [
+                    {
+                      type: "profile",
+                      attributes: {
+                        email,
+                        subscriptions: {
+                          email: { marketing: { consent: "SUBSCRIBED" } },
+                        },
+                      },
+                    },
+                  ],
+                },
+              },
+              relationships: {
+                list: {
+                  data: { type: "list", id: process.env.KLAVIYO_LIST_ID },
+                },
+              },
+            },
+          },
+          { headers: getKlaviyoHeaders() }
+        );
+        await trackQuizCompletedInKlaviyo({
+          email,
+          name,
+          phone,
+          sessionId: refreshedQuizSession.session_id,
+          newsletterConsent,
+          prodotti,
+          coupon: existingCoupon,
+          consiglio,
+          consiglioStyling,
+          consiglioLavaggio,
         });
         await updateQuizSession(refreshedQuizSession?.id, { klaviyo_synced: true });
       } catch (integrationError) {
@@ -1100,7 +1274,7 @@ app.post("/api/subscribe", async (req, res) => {
       klaviyo_synced: false,
       email_sent: false,
     });
-    await sendRoutineEmail();
+    await sendRoutineEmail(coupon);
     await updateQuizSession(savedQuizSession?.id, { email_sent: true });
 
     try {
@@ -1117,37 +1291,48 @@ app.post("/api/subscribe", async (req, res) => {
         quizAnswers,
       });
 
-      if (newsletterConsent) {
-        await axios.post(
-          "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
-          {
-            data: {
-              type: "profile-subscription-bulk-create-job",
-              attributes: {
-                profiles: {
-                  data: [
-                    {
-                      type: "profile",
-                      attributes: {
-                        email,
-                        subscriptions: {
-                          email: { marketing: { consent: "SUBSCRIBED" } },
-                        },
+      await axios.post(
+        "https://a.klaviyo.com/api/profile-subscription-bulk-create-jobs",
+        {
+          data: {
+            type: "profile-subscription-bulk-create-job",
+            attributes: {
+              profiles: {
+                data: [
+                  {
+                    type: "profile",
+                    attributes: {
+                      email,
+                      subscriptions: {
+                        email: { marketing: { consent: "SUBSCRIBED" } },
                       },
                     },
-                  ],
-                },
+                  },
+                ],
               },
-              relationships: {
-                list: {
-                  data: { type: "list", id: process.env.KLAVIYO_LIST_ID },
-                },
+            },
+            relationships: {
+              list: {
+                data: { type: "list", id: process.env.KLAVIYO_LIST_ID },
               },
             },
           },
-          { headers }
-        );
-      }
+        },
+        { headers }
+      );
+
+      await trackQuizCompletedInKlaviyo({
+        email,
+        name,
+        phone,
+        sessionId: savedQuizSession.session_id,
+        newsletterConsent,
+        prodotti,
+        coupon,
+        consiglio,
+        consiglioStyling,
+        consiglioLavaggio,
+      });
 
       await updateQuizSession(savedQuizSession?.id, { klaviyo_synced: true });
     } catch (integrationError) {
