@@ -183,7 +183,31 @@ async function trackQuizCompletedInKlaviyo({
   const eventUniqueId = isTestMode
     ? crypto.randomUUID()
     : `${sessionId}:${coupon.code}`;
-  const primaryProduct = Array.isArray(prodotti) ? prodotti[0] : undefined;
+  const productList = Array.isArray(prodotti) ? prodotti : [];
+  const adviceCandidates = [consiglio, consiglioStyling, consiglioLavaggio]
+    .map(normalizeOptionalText)
+    .filter(Boolean);
+  let selectedAdvice;
+  let primaryProduct;
+
+  for (const advice of adviceCandidates) {
+    const matchingProduct = productList.find((prodotto) => {
+      const productName = normalizeOptionalText(prodotto?.nome);
+      return (
+        productName &&
+        advice.toLocaleLowerCase("it").includes(productName.toLocaleLowerCase("it"))
+      );
+    });
+
+    if (matchingProduct) {
+      primaryProduct = matchingProduct;
+      selectedAdvice = advice;
+      break;
+    }
+  }
+
+  primaryProduct ||= productList[0];
+  selectedAdvice ||= adviceCandidates[0];
   const recommendedProducts = Array.isArray(prodotti)
     ? prodotti.map((prodotto) => ({
         name: prodotto?.nome || "",
@@ -215,9 +239,7 @@ async function trackQuizCompletedInKlaviyo({
               .map((prodotto) => prodotto.name)
               .filter(Boolean),
             usage_tip:
-              normalizeOptionalText(consiglio) ||
-              normalizeOptionalText(consiglioStyling) ||
-              normalizeOptionalText(consiglioLavaggio) ||
+              selectedAdvice ||
               "Segui la routine personalizzata ricevuta via email.",
             coupon_code: coupon.code,
             coupon_percent: Number(coupon.percent),
