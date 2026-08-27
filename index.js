@@ -105,17 +105,26 @@ async function syncFlowEntryToGoogleSheet(entryOrEntries) {
   }
 
   const isBatch = Array.isArray(entryOrEntries);
-  const response = await axios.post(
-    webhookUrl,
-    {
-      secret: process.env.GOOGLE_SHEETS_WEBHOOK_SECRET || "",
-      ...(isBatch ? { entries: entryOrEntries } : entryOrEntries),
-    },
-    {
-      headers: { "Content-Type": "application/json" },
-      timeout: 10000,
+  const requestBody = {
+    secret: process.env.GOOGLE_SHEETS_WEBHOOK_SECRET || "",
+    ...(isBatch ? { entries: entryOrEntries } : entryOrEntries),
+  };
+  let response;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await axios.post(webhookUrl, requestBody, {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      });
+      break;
+    } catch (error) {
+      const retryable = !error?.response || error.response.status >= 500;
+      if (!retryable || attempt === 3) throw error;
+      console.warn("[Google Sheets] Retrying webhook", { attempt });
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
-  );
+  }
 
   if (response.data?.ok === false) {
     throw new Error(response.data?.error || "Google Sheets rejected the entry");

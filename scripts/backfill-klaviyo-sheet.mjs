@@ -94,7 +94,7 @@ async function main() {
       { entries: batches[index], dryRun: isDryRun },
       {
         headers: { "x-backfill-secret": adminSecret },
-        timeout: 30000,
+        timeout: 90000,
       }
     );
     if (response.data?.success === false) {
@@ -115,4 +115,12 @@ async function main() {
   );
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  const status = error?.response?.status || "no-response";
+  const code = error?.code || "UNKNOWN";
+  const message = error?.response?.data?.message || error?.message || "Backfill failed";
+  console.error(`Backfill failed: status=${status} code=${code} message=${message}`);
+  process.exitCode = 1;
+}
