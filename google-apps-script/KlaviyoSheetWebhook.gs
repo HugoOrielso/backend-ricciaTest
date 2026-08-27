@@ -10,7 +10,12 @@ const HEADERS = [
 ];
 
 function doGet() {
-  return jsonResponse_({ ok: true, service: "Klaviyo Flow Sheet webhook" });
+  const spreadsheetId = PropertiesService.getScriptProperties().getProperty("KLAVIYO_SPREADSHEET_ID") || "";
+  return jsonResponse_({
+    ok: true,
+    service: "Klaviyo Flow Sheet webhook",
+    spreadsheetConfigured: Boolean(spreadsheetId),
+  });
 }
 
 function doPost(e) {
@@ -29,7 +34,9 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
-      const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+      const spreadsheetId = PropertiesService.getScriptProperties().getProperty("KLAVIYO_SPREADSHEET_ID") || "";
+      if (!spreadsheetId) throw new Error("KLAVIYO_SPREADSHEET_ID is not configured");
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
       const sheet = spreadsheet.getSheetByName(SHEET_NAME) || spreadsheet.insertSheet(SHEET_NAME);
       ensureHeaders_(sheet);
 
