@@ -97,6 +97,36 @@ function getKlaviyoHeaders() {
   };
 }
 
+async function syncFlowEntryToGoogleSheet(entry) {
+  const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL?.trim();
+  if (!webhookUrl) {
+    console.warn("[Google Sheets] Skipped: GOOGLE_SHEETS_WEBHOOK_URL not configured");
+    return { skipped: true };
+  }
+
+  const response = await axios.post(
+    webhookUrl,
+    {
+      secret: process.env.GOOGLE_SHEETS_WEBHOOK_SECRET || "",
+      ...entry,
+    },
+    {
+      headers: { "Content-Type": "application/json" },
+      timeout: 10000,
+    }
+  );
+
+  if (response.data?.ok === false) {
+    throw new Error(response.data?.error || "Google Sheets rejected the entry");
+  }
+
+  console.log("[Google Sheets] Flow entry synced", {
+    email: entry.email,
+    action: response.data?.action || "accepted",
+  });
+  return response.data;
+}
+
 async function syncQuizProfileToKlaviyo({
   email,
   name,
@@ -173,6 +203,9 @@ async function trackQuizCompletedInKlaviyo({
   consiglio,
   consiglioStyling,
   consiglioLavaggio,
+  utmSource,
+  utmContent,
+  utmCampaign,
 }) {
   const isTestMode = process.env.KLAVIYO_TEST_MODE
     ? process.env.KLAVIYO_TEST_MODE === "true"
@@ -244,6 +277,9 @@ async function trackQuizCompletedInKlaviyo({
             coupon_code: coupon.code,
             coupon_percent: Number(coupon.percent),
             coupon_expires_at: new Date(coupon.expiresAt).toISOString(),
+            utm_source: utmSource || "",
+            utm_content: utmContent || "",
+            utm_campaign: utmCampaign || "",
           },
           metric: {
             data: {
@@ -272,6 +308,24 @@ async function trackQuizCompletedInKlaviyo({
     couponCode: coupon.code,
     testMode: isTestMode,
   });
+
+  try {
+    await syncFlowEntryToGoogleSheet({
+      date: new Date().toISOString(),
+      name: name || "",
+      email: normalizeEmail(email),
+      quizResult: primaryProduct?.nome || "Routine personalizzata",
+      utmSource: utmSource || "",
+      utmContent: utmContent || "",
+      utmCampaign: utmCampaign || "",
+    });
+  } catch (sheetError) {
+    // Klaviyo already accepted the event; a Sheet outage must not block the quiz.
+    console.error("[Google Sheets] Flow entry sync failed", {
+      email: normalizeEmail(email),
+      message: sheetError.message,
+    });
+  }
 }
 
 dotenv.config();
@@ -1113,6 +1167,9 @@ app.post("/api/subscribe", async (req, res) => {
       quizAnswers,
       sessionId,
       sourceUrl,
+      utmSource,
+      utmContent,
+      utmCampaign,
     } = req.body;
 
     logStage("validation", {
@@ -1261,6 +1318,9 @@ app.post("/api/subscribe", async (req, res) => {
           consiglio,
           consiglioStyling,
           consiglioLavaggio,
+          utmSource,
+          utmContent,
+          utmCampaign,
         });
         await updateQuizSession(refreshedQuizSession?.id, { klaviyo_synced: true });
       } catch (integrationError) {
@@ -1354,6 +1414,9 @@ app.post("/api/subscribe", async (req, res) => {
         consiglio,
         consiglioStyling,
         consiglioLavaggio,
+        utmSource,
+        utmContent,
+        utmCampaign,
       });
 
       await updateQuizSession(savedQuizSession?.id, { klaviyo_synced: true });
