@@ -21,8 +21,10 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: "Unauthorized" });
     }
 
-    const email = String(payload.email || "").trim().toLowerCase();
-    if (!email) return jsonResponse_({ ok: false, error: "Email is required" });
+    const entries = (Array.isArray(payload.entries) ? payload.entries : [payload])
+      .map(normalizeEntry_)
+      .filter(function (entry) { return entry.email; });
+    if (!entries.length) return jsonResponse_({ ok: false, error: "At least one email is required" });
 
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
@@ -31,30 +33,64 @@ function doPost(e) {
       const sheet = spreadsheet.getSheetByName(SHEET_NAME) || spreadsheet.insertSheet(SHEET_NAME);
       ensureHeaders_(sheet);
 
-      const row = [
-        payload.date ? new Date(payload.date) : new Date(),
-        payload.name || "",
-        email,
-        payload.quizResult || "",
-        payload.utmSource || "",
-        payload.utmContent || "",
-        payload.utmCampaign || "",
-      ];
-      const existingRow = findEmailRow_(sheet, email);
+      const existingRows = getEmailRows_(sheet);
+      const rowsToAppend = [];
+      let updated = 0;
 
-      if (existingRow) {
-        sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([row]);
-        return jsonResponse_({ ok: true, action: "updated", row: existingRow });
+      entries.forEach(function (entry) {
+        const row = entryToRow_(entry);
+        const existingRow = existingRows[entry.email];
+        if (existingRow) {
+          sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([row]);
+          updated += 1;
+        } else {
+          rowsToAppend.push(row);
+        }
+      });
+
+      if (rowsToAppend.length) {
+        sheet
+          .getRange(sheet.getLastRow() + 1, 1, rowsToAppend.length, HEADERS.length)
+          .setValues(rowsToAppend);
       }
 
-      sheet.appendRow(row);
-      return jsonResponse_({ ok: true, action: "inserted", row: sheet.getLastRow() });
+      return jsonResponse_({
+        ok: true,
+        action: entries.length === 1 ? (updated ? "updated" : "inserted") : "batch",
+        processed: entries.length,
+        inserted: rowsToAppend.length,
+        updated: updated,
+      });
     } finally {
       lock.releaseLock();
     }
   } catch (error) {
     return jsonResponse_({ ok: false, error: String(error && error.message || error) });
   }
+}
+
+function normalizeEntry_(entry) {
+  return {
+    date: entry.date || "",
+    name: entry.name || "",
+    email: String(entry.email || "").trim().toLowerCase(),
+    quizResult: entry.quizResult || "",
+    utmSource: entry.utmSource || "",
+    utmContent: entry.utmContent || "",
+    utmCampaign: entry.utmCampaign || "",
+  };
+}
+
+function entryToRow_(entry) {
+  return [
+    entry.date ? new Date(entry.date) : new Date(),
+    entry.name,
+    entry.email,
+    entry.quizResult,
+    entry.utmSource,
+    entry.utmContent,
+    entry.utmCampaign,
+  ];
 }
 
 function ensureHeaders_(sheet) {
@@ -71,16 +107,17 @@ function ensureHeaders_(sheet) {
   sheet.setFrozenRows(1);
 }
 
-function findEmailRow_(sheet, email) {
+function getEmailRows_(sheet) {
   const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return 0;
-  const match = sheet
+  if (lastRow < 2) return {};
+  return sheet
     .getRange(2, 3, lastRow - 1, 1)
-    .createTextFinder(email)
-    .matchEntireCell(true)
-    .matchCase(false)
-    .findNext();
-  return match ? match.getRow() : 0;
+    .getDisplayValues()
+    .reduce(function (rows, values, index) {
+      const email = String(values[0] || "").trim().toLowerCase();
+      if (email && !rows[email]) rows[email] = index + 2;
+      return rows;
+    }, {});
 }
 
 function jsonResponse_(value) {

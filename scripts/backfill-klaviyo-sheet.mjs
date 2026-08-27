@@ -5,10 +5,9 @@ import { fileURLToPath } from "node:url";
 import axios from "axios";
 
 const backendDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const csvPaths = [
-  path.resolve(backendDir, "../frontend/public/Klaviyo Flow Data.csv"),
-  path.resolve(backendDir, "../frontend/public/Klaviyo Flow Data destinatari.csv"),
-];
+const csvPath = path.resolve(backendDir, "public/Klaviyo Flow Data.csv");
+const batchSize = Math.min(Math.max(Number(process.env.SHEET_BACKFILL_BATCH_SIZE) || 25, 1), 100);
+const isDryRun = process.argv.includes("--dry-run");
 
 function parseCsv(text) {
   const rows = [];
@@ -45,42 +44,75 @@ function parseCsv(text) {
   return rows.map((values) => Object.fromEntries(headers.map((header, index) => [header, values[index] || ""])));
 }
 
-const people = new Map();
-for (const csvPath of csvPaths) {
+function chunks(values, size) {
+  const result = [];
+  for (let index = 0; index < values.length; index += size) {
+    result.push(values.slice(index, index + size));
+  }
+  return result;
+}
+
+async function loadCsvPeople() {
+  const people = new Map();
   const rows = parseCsv(await fs.readFile(csvPath, "utf8"));
   for (const row of rows) {
     const email = String(row.Email || "").trim().toLowerCase();
     if (!email) continue;
-    const previous = people.get(email) || {};
+    const csvName = [row["First Name"], row["Last Name"]]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" ");
     people.set(email, {
-      date: row["Send Time"] || row["Date Sent"] || previous.date || "",
-      name: row["First Name"] || previous.name || "",
+      date: row["Date Sent"] || "",
+      name: csvName,
       email,
-      quizResult: previous.quizResult || "",
-      utmSource: previous.utmSource || "",
-      utmContent: previous.utmContent || "",
-      utmCampaign: previous.utmCampaign || "",
+      quizResult: "",
+      utmSource: "",
+      utmContent: "",
+      utmCampaign: "",
     });
   }
+  return [...people.values()];
 }
 
-if (process.argv.includes("--dry-run")) {
-  console.log(`CSV rows ready: ${people.size} unique emails`);
-  process.exit(0);
+async function main() {
+  const people = await loadCsvPeople();
+  const batches = chunks(people, batchSize);
+  const backendApiUrl = process.env.BACKEND_API_URL?.trim().replace(/\/$/, "");
+  const adminSecret = process.env.SHEET_BACKFILL_ADMIN_SECRET?.trim();
+  if (!backendApiUrl) throw new Error("BACKEND_API_URL is required");
+  if (!adminSecret) throw new Error("SHEET_BACKFILL_ADMIN_SECRET is required");
+
+  let processed = 0;
+  let matched = 0;
+  let inserted = 0;
+  let updated = 0;
+
+  for (let index = 0; index < batches.length; index += 1) {
+    const response = await axios.post(
+      `${backendApiUrl}/api/admin/google-sheets/backfill`,
+      { entries: batches[index], dryRun: isDryRun },
+      {
+        headers: { "x-backfill-secret": adminSecret },
+        timeout: 30000,
+      }
+    );
+    if (response.data?.success === false) {
+      throw new Error(response.data.message || `Batch ${index + 1} rejected`);
+    }
+
+    matched += Number(response.data?.matched || 0);
+    inserted += Number(response.data?.sheet?.inserted || 0);
+    updated += Number(response.data?.sheet?.updated || 0);
+    processed += Number(response.data?.processed || batches[index].length);
+    console.log(`Batch ${index + 1}/${batches.length}: ${processed}/${people.length} processed`);
+  }
+
+  console.log(
+    isDryRun
+      ? `Dry run complete: ${people.length} unique emails, ${matched} matched in database, ${people.length - matched} CSV-only`
+      : `Backfill complete: ${processed} processed, ${matched} enriched from database, ${inserted} inserted, ${updated} updated`
+  );
 }
 
-const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL?.trim();
-if (!webhookUrl) throw new Error("GOOGLE_SHEETS_WEBHOOK_URL is required");
-
-let completed = 0;
-for (const person of people.values()) {
-  const response = await axios.post(webhookUrl, {
-    secret: process.env.GOOGLE_SHEETS_WEBHOOK_SECRET || "",
-    ...person,
-  });
-  if (response.data?.ok === false) throw new Error(response.data.error || `Rejected: ${person.email}`);
-  completed += 1;
-  if (completed % 100 === 0) console.log(`Synced ${completed}/${people.size}`);
-}
-
-console.log(`Backfill complete: ${completed} unique people synced`);
+await main();

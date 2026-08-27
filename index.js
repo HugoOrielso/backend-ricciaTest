@@ -97,18 +97,19 @@ function getKlaviyoHeaders() {
   };
 }
 
-async function syncFlowEntryToGoogleSheet(entry) {
+async function syncFlowEntryToGoogleSheet(entryOrEntries) {
   const webhookUrl = process.env.GOOGLE_SHEETS_WEBHOOK_URL?.trim();
   if (!webhookUrl) {
     console.warn("[Google Sheets] Skipped: GOOGLE_SHEETS_WEBHOOK_URL not configured");
     return { skipped: true };
   }
 
+  const isBatch = Array.isArray(entryOrEntries);
   const response = await axios.post(
     webhookUrl,
     {
       secret: process.env.GOOGLE_SHEETS_WEBHOOK_SECRET || "",
-      ...entry,
+      ...(isBatch ? { entries: entryOrEntries } : entryOrEntries),
     },
     {
       headers: { "Content-Type": "application/json" },
@@ -121,10 +122,28 @@ async function syncFlowEntryToGoogleSheet(entry) {
   }
 
   console.log("[Google Sheets] Flow entry synced", {
-    email: entry.email,
+    count: isBatch ? entryOrEntries.length : 1,
     action: response.data?.action || "accepted",
   });
   return response.data;
+}
+
+function secretsMatch(provided, expected) {
+  const providedBuffer = Buffer.from(String(provided || ""));
+  const expectedBuffer = Buffer.from(String(expected || ""));
+  return (
+    providedBuffer.length > 0 &&
+    providedBuffer.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+  );
+}
+
+function recommendedKitNames(value) {
+  if (!Array.isArray(value)) return "";
+  return value
+    .map((kit) => (typeof kit === "string" ? kit : kit?.nome || kit?.name || ""))
+    .filter(Boolean)
+    .join(" | ");
 }
 
 async function syncQuizProfileToKlaviyo({
@@ -1128,6 +1147,86 @@ async function creaShopifyCoupon() {
     expiresAt: endsAt.toISOString(),
   };
 }
+
+app.post("/api/admin/google-sheets/backfill", async (req, res) => {
+  try {
+    const expectedSecret =
+      process.env.SHEET_BACKFILL_ADMIN_SECRET ||
+      process.env.GOOGLE_SHEETS_WEBHOOK_SECRET;
+    if (!expectedSecret || !secretsMatch(req.headers["x-backfill-secret"], expectedSecret)) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const csvEntries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!csvEntries.length || csvEntries.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "entries must contain between 1 and 100 people",
+      });
+    }
+
+    const normalizedEntries = csvEntries
+      .map((entry) => ({
+        date: entry?.date || "",
+        name: normalizeOptionalText(entry?.name) || "",
+        email: normalizeEmail(entry?.email || ""),
+        quizResult: "",
+        utmSource: "",
+        utmContent: "",
+        utmCampaign: "",
+      }))
+      .filter((entry) => entry.email);
+
+    const sessions = await prisma.quizSession.findMany({
+      where: {
+        email_normalized: { in: normalizedEntries.map((entry) => entry.email) },
+      },
+      select: {
+        email_normalized: true,
+        name: true,
+        kit_consigliato: true,
+        recommended_kits: true,
+        created_at: true,
+      },
+    });
+    const sessionsByEmail = new Map(
+      sessions.map((session) => [session.email_normalized, session])
+    );
+    const enrichedEntries = normalizedEntries.map((entry) => {
+      const session = sessionsByEmail.get(entry.email);
+      return {
+        ...entry,
+        date: session?.created_at?.toISOString() || entry.date,
+        name: session?.name || entry.name,
+        quizResult:
+          session?.kit_consigliato || recommendedKitNames(session?.recommended_kits),
+      };
+    });
+
+    let sheetResult = null;
+    if (!req.body?.dryRun) {
+      sheetResult = await syncFlowEntryToGoogleSheet(enrichedEntries);
+    }
+
+    return res.status(200).json({
+      success: true,
+      processed: enrichedEntries.length,
+      matched: sessions.length,
+      csvOnly: enrichedEntries.length - sessions.length,
+      dryRun: Boolean(req.body?.dryRun),
+      sheet: sheetResult,
+    });
+  } catch (error) {
+    console.error("[Google Sheets] Backfill batch failed", {
+      status: error?.response?.status,
+      message: error?.response?.data?.error || error.message,
+    });
+    return res.status(error?.response?.status || 500).json({
+      success: false,
+      message: error?.response?.data?.error || error.message || "Backfill failed",
+    });
+  }
+});
 
 app.post("/api/pageview", async (req, res) => {
   try {
