@@ -48,7 +48,14 @@ function doPost(e) {
         const row = entryToRow_(entry);
         const existingRow = existingRows[entry.email];
         if (existingRow) {
-          sheet.getRange(existingRow, 1, 1, HEADERS.length).setValues([row]);
+          const range = sheet.getRange(existingRow, 1, 1, HEADERS.length);
+          const currentRow = range.getValues()[0];
+          const mergedRow = row.map(function (value, index) {
+            return value === "" || value === null || typeof value === "undefined"
+              ? currentRow[index]
+              : value;
+          });
+          range.setValues([mergedRow]);
           updated += 1;
         } else {
           rowsToAppend.push(row);

@@ -277,6 +277,9 @@ async function trackQuizCompletedInKlaviyo({
         image_url: prodotto?.immagine || "",
       }))
     : [];
+  const recommendedProductNames = recommendedProducts
+    .map((prodotto) => prodotto.name)
+    .filter(Boolean);
 
   await axios.post(
     "https://a.klaviyo.com/api/events/",
@@ -296,9 +299,7 @@ async function trackQuizCompletedInKlaviyo({
             product_url: primaryProduct?.link || "https://laragazzariccia.com",
             product_image_url: primaryProduct?.immagine || "",
             recommended_products: recommendedProducts,
-            recommended_product_names: recommendedProducts
-              .map((prodotto) => prodotto.name)
-              .filter(Boolean),
+            recommended_product_names: recommendedProductNames,
             usage_tip:
               selectedAdvice ||
               "Segui la routine personalizzata ricevuta via email.",
@@ -342,7 +343,10 @@ async function trackQuizCompletedInKlaviyo({
       date: new Date().toISOString(),
       name: name || "",
       email: normalizeEmail(email),
-      quizResult: primaryProduct?.nome || "Routine personalizzata",
+      quizResult:
+        recommendedProductNames.join(" | ") ||
+        primaryProduct?.nome ||
+        "Routine personalizzata",
       utmSource: utmSource || "",
       utmContent: utmContent || "",
       utmCampaign: utmCampaign || "",
